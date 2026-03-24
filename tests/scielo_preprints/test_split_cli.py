@@ -15,7 +15,9 @@ from sciencebeam_dataset_builder.scielo_preprints.split_cli import (
 
 
 def _records(languages: list[str]) -> list[dict[str, str]]:
-    return [{"ppr_id": f"PPR_{i}", "language": lang} for i, lang in enumerate(languages)]
+    return [
+        {"ppr_id": f"PPR_{i}", "language": lang} for i, lang in enumerate(languages)
+    ]
 
 
 def _write_metadata_csv(path: Path, languages: list[str]) -> None:
@@ -107,10 +109,16 @@ class TestParseArgs:
         assert args.seed == 42
 
     def test_custom_fractions(self, tmp_path):
-        args = parse_args([
-            str(tmp_path / "meta.csv"), str(tmp_path / "split.csv"),
-            "--train", "0.1", "--val", "0.2",
-        ])
+        args = parse_args(
+            [
+                str(tmp_path / "meta.csv"),
+                str(tmp_path / "split.csv"),
+                "--train",
+                "0.1",
+                "--val",
+                "0.2",
+            ]
+        )
         assert args.train == 0.1
         assert args.val == 0.2
 
@@ -129,7 +137,9 @@ class TestMain:
         meta = tmp_path / "meta.csv"
         _write_metadata_csv(meta, ["pt"] * 10)
         with pytest.raises(SystemExit):
-            main([str(meta), str(tmp_path / "out.csv"), "--train", "0.5", "--val", "0.5"])
+            main(
+                [str(meta), str(tmp_path / "out.csv"), "--train", "0.5", "--val", "0.5"]
+            )
 
     def test_exits_when_metadata_empty(self, tmp_path):
         meta = tmp_path / "meta.csv"

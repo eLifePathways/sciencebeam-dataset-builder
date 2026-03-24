@@ -15,7 +15,9 @@ from sciencebeam_dataset_builder.scielo_preprints.metadata_cli import (
 )
 
 
-def _write_xml(path: Path, lang: str | None = "pt", lang_attr: str = "xml:lang") -> None:
+def _write_xml(
+    path: Path, lang: str | None = "pt", lang_attr: str = "xml:lang"
+) -> None:
     """Write a minimal article XML file with optional language attribute."""
     lang_part = f' {lang_attr}="{lang}"' if lang is not None else ""
     path.write_text(

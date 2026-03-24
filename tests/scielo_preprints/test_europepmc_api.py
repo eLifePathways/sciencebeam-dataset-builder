@@ -118,7 +118,9 @@ class TestCountScieloPreprints:
 
 
 class TestIterScieloPreprints:
-    def _make_response(self, results: list[dict[str, str]], next_cursor: str | None = None) -> MagicMock:
+    def _make_response(
+        self, results: list[dict[str, str]], next_cursor: str | None = None
+    ) -> MagicMock:
         mock = MagicMock()
         mock.raise_for_status = MagicMock()
         data: dict = {"resultList": {"result": results}}
