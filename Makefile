@@ -1,6 +1,6 @@
 OUTPUT_DIR ?= ./output
 
-.PHONY: install lint format run test build clean typecheck
+.PHONY: install lint format run test build clean typecheck metadata split
 
 install:
 	uv sync --frozen
@@ -17,9 +17,18 @@ format:
 	uv run ruff format .
 	uv run ruff check --fix .
 
-run-scielo-preprints:
-	uv run -m sciencebeam_dataset_builder.scielo_preprints_cli \
+scielo-preprints-retrieve:
+	uv run -m sciencebeam_dataset_builder.scielo_preprints.retrieve_cli \
 		$(OUTPUT_DIR) $(RUN_ARGS)
+
+scielo-preprints-metadata:
+	uv run -m sciencebeam_dataset_builder.scielo_preprints.metadata_cli \
+		$(OUTPUT_DIR)/scielo-preprints $(OUTPUT_DIR)/scielo-preprints-metadata.csv
+
+scielo-preprints-split:
+	uv run -m sciencebeam_dataset_builder.scielo_preprints.split_cli \
+		$(OUTPUT_DIR)/scielo-preprints-metadata.csv \
+		$(OUTPUT_DIR)/scielo-preprints-split.csv $(SPLIT_ARGS)
 
 test:
 	uv run pytest

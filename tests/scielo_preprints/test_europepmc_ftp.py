@@ -4,7 +4,7 @@ import gzip
 import io
 from unittest.mock import MagicMock, patch
 
-from sciencebeam_dataset_builder.europepmc_ftp import (
+from sciencebeam_dataset_builder.scielo_preprints.europepmc_ftp import (
     BatchFile,
     _iter_articles_from_stream,
     get_batch_files,
@@ -39,7 +39,7 @@ def _gzip_xml(*ppr_ids: int) -> io.BytesIO:
 
 
 class TestGetBatchFiles:
-    def _mock_get(self, html: str):
+    def _mock_get(self, html: str) -> MagicMock:
         mock = MagicMock()
         mock.raise_for_status = MagicMock()
         mock.text = html

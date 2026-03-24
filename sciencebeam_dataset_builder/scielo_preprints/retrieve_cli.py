@@ -9,12 +9,12 @@ from typing import Any
 import requests
 from tqdm import tqdm
 
-from sciencebeam_dataset_builder.europepmc_api import (
+from sciencebeam_dataset_builder.scielo_preprints.europepmc_api import (
     count_scielo_preprints,
     get_pdf_url,
     iter_scielo_preprints,
 )
-from sciencebeam_dataset_builder.europepmc_ftp import (
+from sciencebeam_dataset_builder.scielo_preprints.europepmc_ftp import (
     get_batch_files,
     iter_articles_for_ids,
 )

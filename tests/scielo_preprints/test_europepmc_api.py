@@ -3,7 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 
-from sciencebeam_dataset_builder.europepmc_api import (
+from sciencebeam_dataset_builder.scielo_preprints.europepmc_api import (
     count_scielo_preprints,
     get_pdf_url,
     iter_scielo_preprints,
@@ -80,7 +80,7 @@ class TestGetPdfUrl:
 
 
 class TestCountScieloPreprints:
-    def _mock_get(self, hit_count: int):
+    def _mock_get(self, hit_count: int) -> MagicMock:
         mock = MagicMock()
         mock.raise_for_status = MagicMock()
         mock.json.return_value = {"hitCount": hit_count}
@@ -118,7 +118,7 @@ class TestCountScieloPreprints:
 
 
 class TestIterScieloPreprints:
-    def _make_response(self, results: list, next_cursor: str | None = None):
+    def _make_response(self, results: list[dict[str, str]], next_cursor: str | None = None) -> MagicMock:
         mock = MagicMock()
         mock.raise_for_status = MagicMock()
         data: dict = {"resultList": {"result": results}}

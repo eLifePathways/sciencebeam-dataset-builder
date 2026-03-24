@@ -4,9 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sciencebeam_dataset_builder.scielo_preprints_cli import main, parse_args
+from sciencebeam_dataset_builder.scielo_preprints.retrieve_cli import main, parse_args
 
-MODULE = "sciencebeam_dataset_builder.scielo_preprints_cli"
+MODULE = "sciencebeam_dataset_builder.scielo_preprints.retrieve_cli"
 
 
 def _patch_api(articles=(), count=None, batch_files=(), xml_pairs=()):
