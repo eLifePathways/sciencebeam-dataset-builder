@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import ftfy
 import requests
 from tqdm import tqdm
 
@@ -147,7 +148,9 @@ def main(argv: list[str] | None = None) -> None:
             title = (meta.get("title") or "")[:70]
 
             if meta["_xml_needed"]:
-                (output_dir / f"PPR_{ppr_id}.xml").write_text(xml_str, encoding="utf-8")
+                (output_dir / f"PPR_{ppr_id}.xml").write_text(
+                    ftfy.fix_text(xml_str), encoding="utf-8"
+                )
 
             if meta["_pdf_needed"] and meta["_pdf_url"]:
                 try:

@@ -100,6 +100,21 @@ class TestMain:
         assert xml_path.exists()
         assert xml_path.read_text() == xml_content
 
+    def test_fixes_mojibake_in_xml(self, tmp_path):
+        # EuropePMC FTP batch files contain double-encoded UTF-8.
+        # "Luxúria" is stored as "LuxÃºria" (UTF-8 bytes misread as latin-1).
+        mojibake_xml = "<article><title>LuxÃºria</title></article>"
+        expected_xml = "<article><title>Luxúria</title></article>"
+        patches = _patch_api(
+            articles=[_article(123)],
+            batch_files=["batch"],
+            xml_pairs=[(123, mojibake_xml)],
+        )
+        with patches[0], patches[1], patches[2], patches[3]:
+            main([str(tmp_path)])
+        xml_path = tmp_path / "scielo-preprints" / "PPR_123.xml"
+        assert xml_path.read_text(encoding="utf-8") == expected_xml
+
     def test_skips_existing_xml(self, tmp_path):
         output_dir = tmp_path / "scielo-preprints"
         output_dir.mkdir()
