@@ -324,51 +324,51 @@ class TestExtractArticleMeta:
 
 class TestExtractMetadata:
     def test_returns_ppr_id_from_filename(self, tmp_path):
-        xml_path = tmp_path / "PPR_123.xml"
+        xml_path = tmp_path / "PPR123.xml"
         _write_xml(xml_path, lang="pt")
         row = extract_metadata(xml_path)
         assert row["ppr_id"] == "PPR123"
 
     def test_returns_normalised_language(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(xml_path, lang="po")
         row = extract_metadata(xml_path)
         assert row["language"] == "pt"
         assert row["language_raw"] == "po"
 
     def test_returns_article_type(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(xml_path, article_type="preprint")
         assert extract_metadata(xml_path)["article_type"] == "preprint"
 
     def test_returns_doi(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(xml_path, doi="10.1234/test")
         assert extract_metadata(xml_path)["doi"] == "10.1234/test"
 
     def test_returns_version(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(xml_path, version="3")
         assert extract_metadata(xml_path)["version"] == "3"
 
     def test_returns_title(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(xml_path, title="My Article")
         assert extract_metadata(xml_path)["title"] == "My Article"
 
     def test_returns_authors_as_list_of_dicts(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(xml_path, authors=["Jane Doe", "John Smith"])
         authors = extract_metadata(xml_path)["authors"]
         assert [a["name"] for a in authors] == ["Jane Doe", "John Smith"]
 
     def test_returns_pub_date(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(xml_path, pub_date="2022-03-05")
         assert extract_metadata(xml_path)["pub_date"] == "2022-03-05"
 
     def test_returns_license(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(xml_path, license_url="https://creativecommons.org/licenses/by/4.0/")
         assert (
             extract_metadata(xml_path)["license"]
@@ -376,7 +376,7 @@ class TestExtractMetadata:
         )
 
     def test_returns_subject_categories(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(
             xml_path,
             categories={"heading": "Article", "europepmc-category": "Covid-19"},
@@ -386,7 +386,7 @@ class TestExtractMetadata:
         assert row["subject_europepmc_category"] == "Covid-19"
 
     def test_returns_keywords(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(xml_path, keywords=["COVID-19", "Paraguay", "Attitudes"])
         assert extract_metadata(xml_path)["keywords"] == [
             "COVID-19",
@@ -395,14 +395,14 @@ class TestExtractMetadata:
         ]
 
     def test_returns_empty_keywords_when_absent(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(xml_path)
         assert extract_metadata(xml_path)["keywords"] == []
 
 
 class TestExtractMetadataProvenance:
     def test_provenance_fields_none_when_no_sidecar(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(xml_path)
         row = extract_metadata(xml_path)
         assert row["xml_source_url"] is None
@@ -412,7 +412,7 @@ class TestExtractMetadataProvenance:
         assert row["pdf_downloaded_at"] is None
 
     def test_provenance_fields_populated_from_sidecar(self, tmp_path):
-        xml_path = tmp_path / "PPR_1.xml"
+        xml_path = tmp_path / "PPR1.xml"
         _write_xml(xml_path)
         sidecar = {
             "xml_source_url": "https://europepmc.org/ftp/preprint_fulltext/PPR1_PPR100.xml.gz",
@@ -421,7 +421,7 @@ class TestExtractMetadataProvenance:
             "pdf_source_url": "https://example.com/PPR1.pdf",
             "pdf_downloaded_at": "2024-01-15T10:30:05+00:00",
         }
-        (tmp_path / "PPR_1.provenance.json").write_text(
+        (tmp_path / "PPR1.provenance.json").write_text(
             json.dumps(sidecar), encoding="utf-8"
         )
         row = extract_metadata(xml_path)
@@ -450,7 +450,7 @@ class TestParseArgs:
 class TestMain:
     def test_writes_jsonl_with_one_record_per_xml(self, tmp_path):
         for i in (1, 2, 3):
-            _write_xml(tmp_path / f"PPR_{i}.xml", lang="pt")
+            _write_xml(tmp_path / f"PPR{i}.xml", lang="pt")
         out = tmp_path / "metadata.jsonl"
         main([str(tmp_path), str(out)])
         records = _read_jsonl(out)
@@ -458,7 +458,7 @@ class TestMain:
 
     def test_jsonl_contains_expected_fields(self, tmp_path):
         _write_xml(
-            tmp_path / "PPR_42.xml",
+            tmp_path / "PPR42.xml",
             lang="es",
             categories={"heading": "Article", "europepmc-category": "Covid-19"},
         )
@@ -487,7 +487,7 @@ class TestMain:
         }
 
     def test_authors_is_list_of_dicts_in_jsonl(self, tmp_path):
-        _write_xml(tmp_path / "PPR_1.xml", authors=["Jane Doe", "John Smith"])
+        _write_xml(tmp_path / "PPR1.xml", authors=["Jane Doe", "John Smith"])
         out = tmp_path / "metadata.jsonl"
         main([str(tmp_path), str(out)])
         record = _read_jsonl(out)[0]
@@ -500,8 +500,8 @@ class TestMain:
             main([str(tmp_path), str(tmp_path / "out.jsonl")])
 
     def test_skips_unparseable_xml(self, tmp_path):
-        (tmp_path / "PPR_1.xml").write_text("not xml", encoding="utf-8")
-        _write_xml(tmp_path / "PPR_2.xml", lang="pt")
+        (tmp_path / "PPR1.xml").write_text("not xml", encoding="utf-8")
+        _write_xml(tmp_path / "PPR2.xml", lang="pt")
         out = tmp_path / "metadata.jsonl"
         main([str(tmp_path), str(out)])
         records = _read_jsonl(out)

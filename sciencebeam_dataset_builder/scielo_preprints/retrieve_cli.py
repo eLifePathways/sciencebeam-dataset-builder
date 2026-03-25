@@ -119,9 +119,9 @@ def main(argv: list[str] | None = None) -> None:
             except ValueError:
                 continue
 
-            xml_path = output_dir / f"PPR_{ppr_id}.xml"
+            xml_path = output_dir / f"PPR{ppr_id}.xml"
             pdf_url = get_pdf_url(article)
-            pdf_path = output_dir / f"PPR_{ppr_id}.pdf" if pdf_url else None
+            pdf_path = output_dir / f"PPR{ppr_id}.pdf" if pdf_url else None
 
             xml_needed = not xml_path.exists()
             pdf_needed = pdf_path is not None and not pdf_path.exists()
@@ -154,15 +154,15 @@ def main(argv: list[str] | None = None) -> None:
 
             meta = articles_meta[result.ppr_id]
             title = (meta.get("title") or "")[:70]
-            provenance_path = output_dir / f"PPR_{result.ppr_id}.provenance.json"
+            provenance_path = output_dir / f"PPR{result.ppr_id}.provenance.json"
             provenance = _load_provenance(provenance_path)
 
             if meta["_xml_needed"]:
                 fixed_xml = ftfy.fix_text(result.xml)
-                (output_dir / f"PPR_{result.ppr_id}.xml.original").write_text(
+                (output_dir / f"PPR{result.ppr_id}.xml.original").write_text(
                     result.xml, encoding="utf-8"
                 )
-                (output_dir / f"PPR_{result.ppr_id}.xml").write_text(
+                (output_dir / f"PPR{result.ppr_id}.xml").write_text(
                     fixed_xml, encoding="utf-8"
                 )
                 provenance["xml_source_url"] = result.batch_url
@@ -172,14 +172,14 @@ def main(argv: list[str] | None = None) -> None:
             if meta["_pdf_needed"] and meta["_pdf_url"]:
                 try:
                     _download_pdf(
-                        meta["_pdf_url"], output_dir / f"PPR_{result.ppr_id}.pdf"
+                        meta["_pdf_url"], output_dir / f"PPR{result.ppr_id}.pdf"
                     )
                     provenance["pdf_source_url"] = meta["_pdf_url"]
                     provenance["pdf_downloaded_at"] = datetime.now(
                         timezone.utc
                     ).isoformat()
                 except requests.RequestException as exc:
-                    tqdm.write(f"  PDF download failed for PPR_{result.ppr_id}: {exc}")
+                    tqdm.write(f"  PDF download failed for PPR{result.ppr_id}: {exc}")
 
             if provenance:
                 provenance_path.write_text(

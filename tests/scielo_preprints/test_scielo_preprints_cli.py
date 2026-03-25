@@ -110,7 +110,7 @@ class TestMain:
         )
         with patches[0], patches[1], patches[2], patches[3]:
             main([str(tmp_path)])
-        xml_path = tmp_path / "scielo-preprints" / "PPR_123.xml"
+        xml_path = tmp_path / "scielo-preprints" / "PPR123.xml"
         assert xml_path.exists()
         assert xml_path.read_text() == xml_content
 
@@ -123,7 +123,7 @@ class TestMain:
         )
         with patches[0], patches[1], patches[2], patches[3]:
             main([str(tmp_path)])
-        orig_path = tmp_path / "scielo-preprints" / "PPR_123.xml.original"
+        orig_path = tmp_path / "scielo-preprints" / "PPR123.xml.original"
         assert orig_path.exists()
         assert orig_path.read_text(encoding="utf-8") == mojibake_xml
 
@@ -139,7 +139,7 @@ class TestMain:
         )
         with patches[0], patches[1], patches[2], patches[3]:
             main([str(tmp_path)])
-        xml_path = tmp_path / "scielo-preprints" / "PPR_123.xml"
+        xml_path = tmp_path / "scielo-preprints" / "PPR123.xml"
         assert xml_path.read_text(encoding="utf-8") == expected_xml
 
     def test_writes_provenance_sidecar_for_xml(self, tmp_path):
@@ -150,7 +150,7 @@ class TestMain:
         )
         with patches[0], patches[1], patches[2], patches[3]:
             main([str(tmp_path)])
-        prov_path = tmp_path / "scielo-preprints" / "PPR_123.provenance.json"
+        prov_path = tmp_path / "scielo-preprints" / "PPR123.provenance.json"
         assert prov_path.exists()
         prov = json.loads(prov_path.read_text())
         assert prov["xml_source_url"] == BATCH_URL
@@ -170,7 +170,7 @@ class TestMain:
             with patch("requests.get", return_value=mock_pdf_response):
                 main([str(tmp_path)])
         prov = json.loads(
-            (tmp_path / "scielo-preprints" / "PPR_123.provenance.json").read_text()
+            (tmp_path / "scielo-preprints" / "PPR123.provenance.json").read_text()
         )
         assert prov["pdf_source_url"] == "https://example.com/PPR123.pdf"
         assert "pdf_downloaded_at" in prov
@@ -186,11 +186,11 @@ class TestMain:
             "pdf_source_url": "https://example.com/old.pdf",
             "pdf_downloaded_at": "2024-01-01T00:00:00+00:00",
         }
-        (output_dir / "PPR_123.provenance.json").write_text(
+        (output_dir / "PPR123.provenance.json").write_text(
             json.dumps(existing_prov), encoding="utf-8"
         )
         # PDF already on disk → not re-downloaded
-        (output_dir / "PPR_123.pdf").write_bytes(b"%PDF")
+        (output_dir / "PPR123.pdf").write_bytes(b"%PDF")
 
         patches = _patch_api(
             articles=[_article(123, has_pdf=True)],
@@ -200,14 +200,14 @@ class TestMain:
         with patches[0], patches[1], patches[2], patches[3]:
             main([str(tmp_path), "--no-skip-existing"])
 
-        prov = json.loads((output_dir / "PPR_123.provenance.json").read_text())
+        prov = json.loads((output_dir / "PPR123.provenance.json").read_text())
         assert prov["pdf_source_url"] == "https://example.com/old.pdf"
         assert prov["xml_source_url"] == BATCH_URL
 
     def test_skips_existing_xml(self, tmp_path):
         output_dir = tmp_path / "scielo-preprints"
         output_dir.mkdir()
-        existing = output_dir / "PPR_123.xml"
+        existing = output_dir / "PPR123.xml"
         existing.write_text("original")
 
         patches = _patch_api(articles=[_article(123)])
@@ -222,7 +222,7 @@ class TestMain:
         # but the write is still guarded by _xml_needed (file exists → no overwrite).
         output_dir = tmp_path / "scielo-preprints"
         output_dir.mkdir()
-        existing = output_dir / "PPR_123.xml"
+        existing = output_dir / "PPR123.xml"
         existing.write_text("original")
 
         patches = _patch_api(
@@ -265,7 +265,7 @@ class TestMain:
             with patch("requests.get", return_value=mock_pdf_response):
                 main([str(tmp_path)])
 
-        pdf_path = tmp_path / "scielo-preprints" / "PPR_123.pdf"
+        pdf_path = tmp_path / "scielo-preprints" / "PPR123.pdf"
         assert pdf_path.exists()
         assert pdf_path.read_bytes() == b"%PDF-fake"
 
@@ -284,7 +284,7 @@ class TestMain:
             ):
                 main([str(tmp_path)])  # should not raise
 
-        xml_path = tmp_path / "scielo-preprints" / "PPR_123.xml"
+        xml_path = tmp_path / "scielo-preprints" / "PPR123.xml"
         assert xml_path.exists()
 
     def test_extra_query_is_forwarded(self, tmp_path):

@@ -211,9 +211,9 @@ def main(argv: list[str] | None = None) -> None:
         stream=sys.stderr,
     )
 
-    xml_paths = sorted(args.input_dir.glob("PPR_*.xml"))
+    xml_paths = sorted(args.input_dir.glob("PPR*.xml"))
     if not xml_paths:
-        print(f"No PPR_*.xml files found in {args.input_dir}", file=sys.stderr)
+        print(f"No PPR*.xml files found in {args.input_dir}", file=sys.stderr)
         sys.exit(1)
 
     args.output_jsonl.parent.mkdir(parents=True, exist_ok=True)
