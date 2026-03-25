@@ -33,6 +33,7 @@ disallow_any_generics = false
 
 [dependency-groups]
 dev = [
+    "datasets>=3.0",
     "mypy>=1.15",
     "pytest>=9.0.2",
     "ruff>=0.15.7",
