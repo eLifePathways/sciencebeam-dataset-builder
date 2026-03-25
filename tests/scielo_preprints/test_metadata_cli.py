@@ -327,7 +327,7 @@ class TestExtractMetadata:
         xml_path = tmp_path / "PPR_123.xml"
         _write_xml(xml_path, lang="pt")
         row = extract_metadata(xml_path)
-        assert row["ppr_id"] == "PPR_123"
+        assert row["ppr_id"] == "PPR123"
 
     def test_returns_normalised_language(self, tmp_path):
         xml_path = tmp_path / "PPR_1.xml"
@@ -506,4 +506,4 @@ class TestMain:
         main([str(tmp_path), str(out)])
         records = _read_jsonl(out)
         assert len(records) == 1
-        assert records[0]["ppr_id"] == "PPR_2"
+        assert records[0]["ppr_id"] == "PPR2"
