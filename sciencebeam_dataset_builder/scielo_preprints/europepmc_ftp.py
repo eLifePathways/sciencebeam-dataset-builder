@@ -124,18 +124,6 @@ def iter_articles_for_ids(
 
         remaining = set(ids_in_batch)
         for attempt in range(MAX_RETRIES + 1):
-            if attempt > 0:
-                delay = _RETRY_DELAYS[min(attempt - 1, len(_RETRY_DELAYS) - 1)]
-                LOGGER.warning(
-                    "Retrying %s in %ds (attempt %d/%d, %d IDs remaining)",
-                    filename,
-                    delay,
-                    attempt,
-                    MAX_RETRIES,
-                    len(remaining),
-                )
-                time.sleep(delay)
-
             try:
                 response = requests.get(batch_file.url, stream=True, timeout=600)
                 response.raise_for_status()
@@ -162,9 +150,13 @@ def iter_articles_for_ids(
                         exc,
                     )
                     raise
+                delay = _RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)]
                 LOGGER.warning(
-                    "Network error streaming %s: %s (%s), will retry",
+                    "Retrying %s in %ds (attempt %d/%d, %d IDs remaining)",
                     filename,
-                    exc,
-                    type(exc).__name__,
+                    delay,
+                    attempt + 1,
+                    MAX_RETRIES,
+                    len(remaining),
                 )
+                time.sleep(delay)
