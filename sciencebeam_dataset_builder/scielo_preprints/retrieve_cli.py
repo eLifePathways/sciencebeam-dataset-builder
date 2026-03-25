@@ -158,6 +158,9 @@ def main(argv: list[str] | None = None) -> None:
             provenance = _load_provenance(provenance_path)
 
             if meta["_xml_needed"]:
+                (output_dir / f"PPR_{result.ppr_id}.xml.original").write_text(
+                    result.xml, encoding="utf-8"
+                )
                 (output_dir / f"PPR_{result.ppr_id}.xml").write_text(
                     ftfy.fix_text(result.xml), encoding="utf-8"
                 )

@@ -114,6 +114,19 @@ class TestMain:
         assert xml_path.exists()
         assert xml_path.read_text() == xml_content
 
+    def test_saves_original_xml_alongside_fixed(self, tmp_path):
+        mojibake_xml = "<article><title>LuxÃºria</title></article>"
+        patches = _patch_api(
+            articles=[_article(123)],
+            batch_files=["batch"],
+            xml_triples=[_article_result(123, mojibake_xml)],
+        )
+        with patches[0], patches[1], patches[2], patches[3]:
+            main([str(tmp_path)])
+        orig_path = tmp_path / "scielo-preprints" / "PPR_123.xml.original"
+        assert orig_path.exists()
+        assert orig_path.read_text(encoding="utf-8") == mojibake_xml
+
     def test_fixes_mojibake_in_xml(self, tmp_path):
         # EuropePMC FTP batch files contain double-encoded UTF-8.
         # "Luxúria" is stored as "LuxÃºria" (UTF-8 bytes misread as latin-1).
