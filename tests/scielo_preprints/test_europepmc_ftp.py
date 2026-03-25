@@ -5,6 +5,7 @@ import io
 from unittest.mock import MagicMock, patch
 
 from sciencebeam_dataset_builder.scielo_preprints.europepmc_ftp import (
+    MAX_RETRIES,
     BatchFile,
     _iter_articles_from_stream,
     get_batch_files,
@@ -142,6 +143,33 @@ class TestIterArticlesForIds:
         assert len(results) == 1
         assert results[0].ppr_id == 42
         assert results[0].batch_url == "http://x/PPR1_PPR100.xml.gz"
+
+    def test_retries_on_network_error_and_succeeds(self):
+        batch = [BatchFile(url="http://x/PPR1_PPR100.xml.gz", start_id=1, end_id=100)]
+        ok_response = MagicMock()
+        ok_response.raise_for_status = MagicMock()
+        ok_response.raw = _gzip_xml(42)
+
+        with patch(
+            "requests.get", side_effect=[ConnectionError("timeout"), ok_response]
+        ):
+            with patch("time.sleep"):
+                results = list(iter_articles_for_ids(batch, {42}))
+
+        assert len(results) == 1
+        assert results[0].ppr_id == 42
+
+    def test_raises_after_max_retries(self):
+        batch = [BatchFile(url="http://x/PPR1_PPR100.xml.gz", start_id=1, end_id=100)]
+
+        with patch("requests.get", side_effect=ConnectionError("timeout")) as mock_get:
+            with patch("time.sleep"):
+                try:
+                    list(iter_articles_for_ids(batch, {42}))
+                except ConnectionError:
+                    pass
+
+        assert mock_get.call_count == MAX_RETRIES + 1
 
     def test_only_requests_batches_containing_target_ids(self):
         batches = [

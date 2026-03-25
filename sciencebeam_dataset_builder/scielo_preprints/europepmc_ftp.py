@@ -3,6 +3,7 @@
 import gzip
 import logging
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,6 +14,9 @@ import requests
 LOGGER = logging.getLogger(__name__)
 
 PREPRINT_FULLTEXT_BASE = "https://europepmc.org/ftp/preprint_fulltext"
+
+MAX_RETRIES = 3
+_RETRY_DELAYS = (5, 30, 120)  # seconds between successive retries
 
 
 @dataclass(frozen=True)
@@ -97,7 +101,11 @@ def iter_articles_for_ids(
     batch_files: list[BatchFile],
     target_ids: set[int],
 ) -> Iterator[ArticleResult]:
-    """Stream relevant batch files and yield an ArticleResult for each target ID found."""
+    """Stream relevant batch files and yield an ArticleResult for each target ID found.
+
+    Retries each batch file up to MAX_RETRIES times on network errors, resuming
+    from where it left off (already-yielded IDs are not re-fetched).
+    """
     for batch_file in batch_files:
         ids_in_batch = {
             id_ for id_ in target_ids if batch_file.start_id <= id_ <= batch_file.end_id
@@ -114,17 +122,49 @@ def iter_articles_for_ids(
             batch_file.end_id,
         )
 
-        response = requests.get(batch_file.url, stream=True, timeout=600)
-        response.raise_for_status()
-        response.raw.decode_content = True
+        remaining = set(ids_in_batch)
+        for attempt in range(MAX_RETRIES + 1):
+            if attempt > 0:
+                delay = _RETRY_DELAYS[min(attempt - 1, len(_RETRY_DELAYS) - 1)]
+                LOGGER.warning(
+                    "Retrying %s in %ds (attempt %d/%d, %d IDs remaining)",
+                    filename,
+                    delay,
+                    attempt,
+                    MAX_RETRIES,
+                    len(remaining),
+                )
+                time.sleep(delay)
 
-        with gzip.open(response.raw, "rb") as gz_f:
-            for ppr_id, xml_str in _iter_articles_from_stream(
-                cast(IO[bytes], gz_f), ids_in_batch
-            ):
-                yield ArticleResult(
-                    ppr_id=ppr_id,
-                    xml=xml_str,
-                    batch_url=batch_file.url,
-                    downloaded_at=datetime.now(timezone.utc),
+            try:
+                response = requests.get(batch_file.url, stream=True, timeout=600)
+                response.raise_for_status()
+                response.raw.decode_content = True
+
+                with gzip.open(response.raw, "rb") as gz_f:
+                    for ppr_id, xml_str in _iter_articles_from_stream(
+                        cast(IO[bytes], gz_f), remaining
+                    ):
+                        remaining.discard(ppr_id)
+                        yield ArticleResult(
+                            ppr_id=ppr_id,
+                            xml=xml_str,
+                            batch_url=batch_file.url,
+                            downloaded_at=datetime.now(timezone.utc),
+                        )
+                break  # batch completed successfully
+            except Exception as exc:
+                if attempt == MAX_RETRIES:
+                    LOGGER.error(
+                        "Failed to stream %s after %d attempts: %s",
+                        filename,
+                        MAX_RETRIES + 1,
+                        exc,
+                    )
+                    raise
+                LOGGER.warning(
+                    "Network error streaming %s: %s (%s), will retry",
+                    filename,
+                    exc,
+                    type(exc).__name__,
                 )
