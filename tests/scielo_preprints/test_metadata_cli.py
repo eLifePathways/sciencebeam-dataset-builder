@@ -241,14 +241,15 @@ class TestExtractMetadata:
 
 
 class TestExtractMetadataProvenance:
-    def test_provenance_fields_empty_when_no_sidecar(self, tmp_path):
+    def test_provenance_fields_none_when_no_sidecar(self, tmp_path):
         xml_path = tmp_path / "PPR_1.xml"
         _write_xml(xml_path)
         row = extract_metadata(xml_path)
-        assert row["xml_source_url"] == ""
-        assert row["xml_downloaded_at"] == ""
-        assert row["pdf_source_url"] == ""
-        assert row["pdf_downloaded_at"] == ""
+        assert row["xml_source_url"] is None
+        assert row["xml_downloaded_at"] is None
+        assert row["xml_ftfy_applied"] is None
+        assert row["pdf_source_url"] is None
+        assert row["pdf_downloaded_at"] is None
 
     def test_provenance_fields_populated_from_sidecar(self, tmp_path):
         xml_path = tmp_path / "PPR_1.xml"
@@ -256,6 +257,7 @@ class TestExtractMetadataProvenance:
         sidecar = {
             "xml_source_url": "https://europepmc.org/ftp/preprint_fulltext/PPR1_PPR100.xml.gz",
             "xml_downloaded_at": "2024-01-15T10:30:00+00:00",
+            "xml_ftfy_applied": True,
             "pdf_source_url": "https://example.com/PPR1.pdf",
             "pdf_downloaded_at": "2024-01-15T10:30:05+00:00",
         }
@@ -265,6 +267,7 @@ class TestExtractMetadataProvenance:
         row = extract_metadata(xml_path)
         assert row["xml_source_url"] == sidecar["xml_source_url"]
         assert row["xml_downloaded_at"] == sidecar["xml_downloaded_at"]
+        assert row["xml_ftfy_applied"] is True
         assert row["pdf_source_url"] == sidecar["pdf_source_url"]
         assert row["pdf_downloaded_at"] == sidecar["pdf_downloaded_at"]
 
@@ -311,6 +314,7 @@ class TestMain:
             "has_pdf",
             "xml_source_url",
             "xml_downloaded_at",
+            "xml_ftfy_applied",
             "pdf_source_url",
             "pdf_downloaded_at",
         }

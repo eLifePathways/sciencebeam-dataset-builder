@@ -71,7 +71,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _load_provenance(path: Path) -> dict[str, str]:
+def _load_provenance(path: Path) -> dict[str, str | bool]:
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
     return {}
@@ -158,14 +158,16 @@ def main(argv: list[str] | None = None) -> None:
             provenance = _load_provenance(provenance_path)
 
             if meta["_xml_needed"]:
+                fixed_xml = ftfy.fix_text(result.xml)
                 (output_dir / f"PPR_{result.ppr_id}.xml.original").write_text(
                     result.xml, encoding="utf-8"
                 )
                 (output_dir / f"PPR_{result.ppr_id}.xml").write_text(
-                    ftfy.fix_text(result.xml), encoding="utf-8"
+                    fixed_xml, encoding="utf-8"
                 )
                 provenance["xml_source_url"] = result.batch_url
                 provenance["xml_downloaded_at"] = result.downloaded_at.isoformat()
+                provenance["xml_ftfy_applied"] = fixed_xml != result.xml
 
             if meta["_pdf_needed"] and meta["_pdf_url"]:
                 try:

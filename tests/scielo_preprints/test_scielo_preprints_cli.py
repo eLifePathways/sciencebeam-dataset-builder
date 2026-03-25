@@ -155,6 +155,7 @@ class TestMain:
         prov = json.loads(prov_path.read_text())
         assert prov["xml_source_url"] == BATCH_URL
         assert prov["xml_downloaded_at"] == _FIXED_TIME.isoformat()
+        assert prov["xml_ftfy_applied"] is False  # plain ASCII — ftfy changes nothing
 
     def test_writes_provenance_sidecar_for_pdf(self, tmp_path):
         mock_pdf_response = MagicMock()

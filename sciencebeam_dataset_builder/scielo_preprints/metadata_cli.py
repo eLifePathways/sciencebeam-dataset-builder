@@ -11,6 +11,7 @@ from typing import Any
 PROVENANCE_FIELDS = [
     "xml_source_url",
     "xml_downloaded_at",
+    "xml_ftfy_applied",
     "pdf_source_url",
     "pdf_downloaded_at",
 ]
@@ -106,7 +107,7 @@ def extract_metadata(xml_path: Path) -> dict[str, Any]:
         "language": language,
         "language_raw": language_raw,
         "has_pdf": xml_path.with_suffix(".pdf").exists(),
-        **{field: provenance.get(field, "") for field in PROVENANCE_FIELDS},
+        **{field: provenance.get(field, None) for field in PROVENANCE_FIELDS},
     }
 
 
