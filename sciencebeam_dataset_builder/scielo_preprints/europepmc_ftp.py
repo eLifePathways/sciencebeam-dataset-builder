@@ -5,6 +5,7 @@ import logging
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import IO, Iterator, cast
 
 import requests
@@ -19,6 +20,14 @@ class BatchFile:
     url: str
     start_id: int
     end_id: int
+
+
+@dataclass(frozen=True)
+class ArticleResult:
+    ppr_id: int
+    xml: str
+    batch_url: str
+    downloaded_at: datetime
 
 
 def get_batch_files() -> list[BatchFile]:
@@ -87,8 +96,8 @@ def _iter_articles_from_stream(
 def iter_articles_for_ids(
     batch_files: list[BatchFile],
     target_ids: set[int],
-) -> Iterator[tuple[int, str, str]]:
-    """Stream relevant batch files and yield (ppr_id, xml_str, batch_url) for each target ID found."""
+) -> Iterator[ArticleResult]:
+    """Stream relevant batch files and yield an ArticleResult for each target ID found."""
     for batch_file in batch_files:
         ids_in_batch = {
             id_ for id_ in target_ids if batch_file.start_id <= id_ <= batch_file.end_id
@@ -113,4 +122,9 @@ def iter_articles_for_ids(
             for ppr_id, xml_str in _iter_articles_from_stream(
                 cast(IO[bytes], gz_f), ids_in_batch
             ):
-                yield ppr_id, xml_str, batch_file.url
+                yield ArticleResult(
+                    ppr_id=ppr_id,
+                    xml=xml_str,
+                    batch_url=batch_file.url,
+                    downloaded_at=datetime.now(timezone.utc),
+                )

@@ -1,10 +1,12 @@
 """Tests for scielo_preprints_cli module."""
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from sciencebeam_dataset_builder.scielo_preprints.europepmc_ftp import ArticleResult
 from sciencebeam_dataset_builder.scielo_preprints.retrieve_cli import main, parse_args
 
 MODULE = "sciencebeam_dataset_builder.scielo_preprints.retrieve_cli"
@@ -24,8 +26,13 @@ def _patch_api(articles=(), count=None, batch_files=(), xml_triples=()):
     ]
 
 
-def _xml_triple(ppr_id: int, xml: str, batch_url: str = BATCH_URL) -> tuple:
-    return (ppr_id, xml, batch_url)
+_FIXED_TIME = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+
+def _article_result(ppr_id: int, xml: str, batch_url: str = BATCH_URL) -> ArticleResult:
+    return ArticleResult(
+        ppr_id=ppr_id, xml=xml, batch_url=batch_url, downloaded_at=_FIXED_TIME
+    )
 
 
 def _article(ppr_id: int, *, has_pdf: bool = False) -> dict:
@@ -99,7 +106,7 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123)],
             batch_files=["batch"],
-            xml_triples=[_xml_triple(123, xml_content)],
+            xml_triples=[_article_result(123, xml_content)],
         )
         with patches[0], patches[1], patches[2], patches[3]:
             main([str(tmp_path)])
@@ -115,7 +122,7 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123)],
             batch_files=["batch"],
-            xml_triples=[_xml_triple(123, mojibake_xml)],
+            xml_triples=[_article_result(123, mojibake_xml)],
         )
         with patches[0], patches[1], patches[2], patches[3]:
             main([str(tmp_path)])
@@ -126,7 +133,7 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123)],
             batch_files=["batch"],
-            xml_triples=[_xml_triple(123, "<article/>", BATCH_URL)],
+            xml_triples=[_article_result(123, "<article/>", BATCH_URL)],
         )
         with patches[0], patches[1], patches[2], patches[3]:
             main([str(tmp_path)])
@@ -134,7 +141,7 @@ class TestMain:
         assert prov_path.exists()
         prov = json.loads(prov_path.read_text())
         assert prov["xml_source_url"] == BATCH_URL
-        assert "xml_downloaded_at" in prov
+        assert prov["xml_downloaded_at"] == _FIXED_TIME.isoformat()
 
     def test_writes_provenance_sidecar_for_pdf(self, tmp_path):
         mock_pdf_response = MagicMock()
@@ -143,7 +150,7 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123, has_pdf=True)],
             batch_files=["batch"],
-            xml_triples=[_xml_triple(123, "<article/>")],
+            xml_triples=[_article_result(123, "<article/>")],
         )
         with patches[0], patches[1], patches[2], patches[3]:
             with patch("requests.get", return_value=mock_pdf_response):
@@ -174,7 +181,7 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123, has_pdf=True)],
             batch_files=["batch"],
-            xml_triples=[_xml_triple(123, "<article/>")],
+            xml_triples=[_article_result(123, "<article/>")],
         )
         with patches[0], patches[1], patches[2], patches[3]:
             main([str(tmp_path), "--no-skip-existing"])
@@ -207,7 +214,7 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123)],
             batch_files=["batch"],
-            xml_triples=[_xml_triple(123, "<article>new</article>")],
+            xml_triples=[_article_result(123, "<article>new</article>")],
         )
         with patches[0], patches[1], patches[2] as mock_batch, patches[3]:
             main([str(tmp_path), "--no-skip-existing"])
@@ -217,7 +224,9 @@ class TestMain:
 
     def test_limit_caps_number_of_downloads(self, tmp_path):
         articles = [_article(i) for i in range(1, 4)]
-        xml_triples = [_xml_triple(i, f"<article>{i}</article>") for i in range(1, 4)]
+        xml_triples = [
+            _article_result(i, f"<article>{i}</article>") for i in range(1, 4)
+        ]
         patches = _patch_api(
             articles=articles, batch_files=["batch"], xml_triples=xml_triples
         )
@@ -236,7 +245,7 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123, has_pdf=True)],
             batch_files=["batch"],
-            xml_triples=[_xml_triple(123, xml_content)],
+            xml_triples=[_article_result(123, xml_content)],
         )
         with patches[0], patches[1], patches[2], patches[3]:
             with patch("requests.get", return_value=mock_pdf_response):
@@ -253,7 +262,7 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123, has_pdf=True)],
             batch_files=["batch"],
-            xml_triples=[_xml_triple(123, xml_content)],
+            xml_triples=[_article_result(123, xml_content)],
         )
         with patches[0], patches[1], patches[2], patches[3]:
             with patch(

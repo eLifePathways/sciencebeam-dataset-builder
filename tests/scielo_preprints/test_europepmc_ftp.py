@@ -140,9 +140,8 @@ class TestIterArticlesForIds:
             results = list(iter_articles_for_ids(batch, {42}))
 
         assert len(results) == 1
-        ppr_id, xml_str, batch_url = results[0]
-        assert ppr_id == 42
-        assert batch_url == "http://x/PPR1_PPR100.xml.gz"
+        assert results[0].ppr_id == 42
+        assert results[0].batch_url == "http://x/PPR1_PPR100.xml.gz"
 
     def test_only_requests_batches_containing_target_ids(self):
         batches = [
