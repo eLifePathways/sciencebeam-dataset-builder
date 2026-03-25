@@ -1,6 +1,6 @@
 OUTPUT_DIR ?= ./output
 
-.PHONY: install lint format run test build clean typecheck metadata split
+.PHONY: install lint format run test build clean typecheck metadata split explore-scielo-preprints-jats
 
 install:
 	uv sync --frozen
@@ -8,10 +8,10 @@ install:
 lint:
 	uv run ruff check .
 	uv run ruff format --check .
-	uv run mypy sciencebeam_dataset_builder
+	uv run mypy sciencebeam_dataset_builder notebooks
 
 typecheck:
-	uv run mypy sciencebeam_dataset_builder
+	uv run mypy sciencebeam_dataset_builder notebooks
 
 format:
 	uv run ruff format .
@@ -19,6 +19,9 @@ format:
 
 test:
 	uv run pytest
+
+explore-scielo-preprints-jats:
+	uv run python notebooks/explore_scielo_preprints_jats.py
 
 hf-login:
 	uv run hf auth login
