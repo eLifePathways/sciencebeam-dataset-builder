@@ -174,21 +174,6 @@ class TestExtractArticleMeta:
         )
         assert _extract_article_meta(root)["pub_date"] == "2022-03-05"
 
-    def test_fixes_mojibake_in_title(self):
-        # "Jesús" stored as mojibake "JesÃºs" (UTF-8 bytes mis-decoded as Latin-1)
-        root = self._meta(
-            "<title-group><article-title>JesÃºs</article-title></title-group>"
-        )
-        assert _extract_article_meta(root)["title"] == "Jesús"
-
-    def test_fixes_mojibake_in_author_names(self):
-        root = self._meta(
-            "<contrib-group><contrib contrib-type='author'><name>"
-            "<given-names>JesÃºs</given-names><surname>SÃ¡nchez</surname>"
-            "</name></contrib></contrib-group>"
-        )
-        assert _extract_article_meta(root)["author_names"] == ["Jesús Sánchez"]
-
     def test_returns_empty_values_when_fields_missing(self):
         root = ET.fromstring("<article><front><article-meta/></front></article>")
         result = _extract_article_meta(root)

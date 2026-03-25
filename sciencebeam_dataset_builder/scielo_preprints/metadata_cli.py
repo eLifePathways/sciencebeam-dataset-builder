@@ -8,8 +8,6 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-import ftfy
-
 PROVENANCE_FIELDS = [
     "xml_source_url",
     "xml_downloaded_at",
@@ -55,14 +53,14 @@ def _extract_article_meta(root: ET.Element) -> dict[str, Any]:
         if v.get("article-version-type") == "number":
             version = (v.text or "").strip()
 
-    title = ftfy.fix_text((meta.findtext("title-group/article-title") or "").strip())
+    title = (meta.findtext("title-group/article-title") or "").strip()
 
     author_names: list[str] = []
     for contrib in meta.findall("contrib-group/contrib"):
         name = contrib.find("name")
         if name is not None:
-            given = ftfy.fix_text((name.findtext("given-names") or "").strip())
-            surname = ftfy.fix_text((name.findtext("surname") or "").strip())
+            given = (name.findtext("given-names") or "").strip()
+            surname = (name.findtext("surname") or "").strip()
             full = f"{given} {surname}".strip()
             if full:
                 author_names.append(full)
