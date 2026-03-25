@@ -17,6 +17,9 @@ format:
 	uv run ruff format .
 	uv run ruff check --fix .
 
+test:
+	uv run pytest
+
 hf-login:
 	uv run hf auth login
 
@@ -48,9 +51,6 @@ scielo-preprints-upload-to-hf:
 		$(OUTPUT_DIR)/scielo-preprints-hf-dataset \
 		scielo-preprints-jats \
 		--type dataset
-
-test:
-	uv run pytest
 
 build:
 	uv build
