@@ -15,6 +15,8 @@ from sciencebeam_dataset_builder.scielo_preprints.metadata_cli import (
     _extract_article_meta,
 )
 
+ALI_NS = "http://www.niso.org/schemas/ali/1.0/"
+
 
 def _write_xml(
     path: Path,
@@ -26,8 +28,14 @@ def _write_xml(
     title: str = "",
     authors: list[str] | None = None,
     pub_date: str = "",
+    license_url: str = "",
+    categories: dict[str, str] | None = None,
 ) -> None:
-    """Write a minimal article XML file with optional metadata."""
+    """Write a minimal article XML file with optional metadata.
+
+    authors is a list of "Given Surname" strings (simple form, no ORCID/affiliations).
+    For richer author tests use inline XML via _extract_article_meta directly.
+    """
     lang_part = f' {lang_attr}="{lang}"' if lang is not None else ""
     type_part = f' article-type="{article_type}"' if article_type else ""
 
@@ -62,12 +70,31 @@ def _write_xml(
             f"<year>{y}</year><month>{m}</month><day>{d}</day>"
             f"</pub-date>"
         )
+    license_xml = ""
+    if license_url:
+        license_xml = (
+            f'<permissions xmlns:ali="{ALI_NS}">'
+            f"<license>"
+            f"<ali:license_ref>{license_url}</ali:license_ref>"
+            f"</license>"
+            f"</permissions>"
+        )
+    categories_xml = ""
+    if categories:
+        groups = "".join(
+            f'<subj-group subj-group-type="{sg_type}">'
+            f"<subject>{subject}</subject>"
+            f"</subj-group>"
+            for sg_type, subject in categories.items()
+        )
+        categories_xml = f"<article-categories>{groups}</article-categories>"
 
     path.write_text(
         f'<?xml version="1.0" encoding="UTF-8"?>'
         f"<article{lang_part}{type_part}>"
         f"<front><article-meta>"
         f"{doi_xml}{version_xml}{title_xml}{authors_xml}{pub_date_xml}"
+        f"{license_xml}{categories_xml}"
         f"</article-meta></front>"
         f"</article>",
         encoding="utf-8",
@@ -153,7 +180,7 @@ class TestExtractArticleMeta:
         )
         assert _extract_article_meta(root)["title"] == "My Title"
 
-    def test_extracts_author_names_as_list(self):
+    def test_extracts_authors_as_list_of_dicts(self):
         root = self._meta(
             "<contrib-group>"
             "<contrib contrib-type='author'><name>"
@@ -164,7 +191,63 @@ class TestExtractArticleMeta:
             "</name></contrib>"
             "</contrib-group>"
         )
-        assert _extract_article_meta(root)["author_names"] == ["Jane Doe", "John Smith"]
+        authors = _extract_article_meta(root)["authors"]
+        assert [a["name"] for a in authors] == ["Jane Doe", "John Smith"]
+
+    def test_extracts_author_orcid(self):
+        root = self._meta(
+            "<contrib-group>"
+            "<contrib contrib-type='author'>"
+            "<contrib-id contrib-id-type='orcid'>https://orcid.org/0000-0001-2345-6789</contrib-id>"
+            "<name><given-names>Jane</given-names><surname>Doe</surname></name>"
+            "</contrib>"
+            "</contrib-group>"
+        )
+        author = _extract_article_meta(root)["authors"][0]
+        assert author["orcid"] == "https://orcid.org/0000-0001-2345-6789"
+
+    def test_author_orcid_empty_when_absent(self):
+        root = self._meta(
+            "<contrib-group>"
+            "<contrib contrib-type='author'><name>"
+            "<given-names>Jane</given-names><surname>Doe</surname>"
+            "</name></contrib>"
+            "</contrib-group>"
+        )
+        assert _extract_article_meta(root)["authors"][0]["orcid"] == ""
+
+    def test_extracts_author_affiliations_via_xref(self):
+        root = self._meta(
+            '<aff id="A1"><label>1</label>University of Somewhere</aff>'
+            '<aff id="A2"><label>2</label>Institute of Things</aff>'
+            "<contrib-group>"
+            "<contrib contrib-type='author'>"
+            "<name><given-names>Jane</given-names><surname>Doe</surname></name>"
+            '<xref ref-type="aff" rid="A1">1</xref>'
+            "</contrib>"
+            "<contrib contrib-type='author'>"
+            "<name><given-names>John</given-names><surname>Smith</surname></name>"
+            '<xref ref-type="aff" rid="A1">1</xref>'
+            '<xref ref-type="aff" rid="A2">2</xref>'
+            "</contrib>"
+            "</contrib-group>"
+        )
+        authors = _extract_article_meta(root)["authors"]
+        assert authors[0]["affiliations"] == ["University of Somewhere"]
+        assert authors[1]["affiliations"] == [
+            "University of Somewhere",
+            "Institute of Things",
+        ]
+
+    def test_author_affiliations_empty_when_no_xref(self):
+        root = self._meta(
+            "<contrib-group>"
+            "<contrib contrib-type='author'><name>"
+            "<given-names>Jane</given-names><surname>Doe</surname>"
+            "</name></contrib>"
+            "</contrib-group>"
+        )
+        assert _extract_article_meta(root)["authors"][0]["affiliations"] == []
 
     def test_extracts_pub_date(self):
         root = self._meta(
@@ -174,14 +257,49 @@ class TestExtractArticleMeta:
         )
         assert _extract_article_meta(root)["pub_date"] == "2022-03-05"
 
+    def test_extracts_license_url(self):
+        root = self._meta(
+            f'<permissions xmlns:ali="{ALI_NS}">'
+            f"<license>"
+            f"<ali:license_ref>https://creativecommons.org/licenses/by/4.0/</ali:license_ref>"
+            f"</license>"
+            f"</permissions>"
+        )
+        assert (
+            _extract_article_meta(root)["license"]
+            == "https://creativecommons.org/licenses/by/4.0/"
+        )
+
+    def test_license_empty_when_absent(self):
+        root = ET.fromstring("<article><front><article-meta/></front></article>")
+        assert _extract_article_meta(root)["license"] == ""
+
+    def test_extracts_subject_categories(self):
+        root = self._meta(
+            "<article-categories>"
+            '<subj-group subj-group-type="heading"><subject>Article</subject></subj-group>'
+            '<subj-group subj-group-type="europepmc-category"><subject>Covid-19</subject></subj-group>'
+            "</article-categories>"
+        )
+        result = _extract_article_meta(root)
+        assert result["subject_heading"] == "Article"
+        assert result["subject_europepmc_category"] == "Covid-19"
+
+    def test_no_subject_fields_when_categories_absent(self):
+        root = ET.fromstring("<article><front><article-meta/></front></article>")
+        result = _extract_article_meta(root)
+        assert "subject_heading" not in result
+        assert "subject_europepmc_category" not in result
+
     def test_returns_empty_values_when_fields_missing(self):
         root = ET.fromstring("<article><front><article-meta/></front></article>")
         result = _extract_article_meta(root)
         assert result["doi"] == ""
         assert result["version"] == ""
         assert result["title"] == ""
-        assert result["author_names"] == []
+        assert result["authors"] == []
         assert result["pub_date"] == ""
+        assert result["license"] == ""
 
 
 class TestExtractMetadata:
@@ -218,15 +336,34 @@ class TestExtractMetadata:
         _write_xml(xml_path, title="My Article")
         assert extract_metadata(xml_path)["title"] == "My Article"
 
-    def test_returns_author_names_as_list(self, tmp_path):
+    def test_returns_authors_as_list_of_dicts(self, tmp_path):
         xml_path = tmp_path / "PPR_1.xml"
         _write_xml(xml_path, authors=["Jane Doe", "John Smith"])
-        assert extract_metadata(xml_path)["author_names"] == ["Jane Doe", "John Smith"]
+        authors = extract_metadata(xml_path)["authors"]
+        assert [a["name"] for a in authors] == ["Jane Doe", "John Smith"]
 
     def test_returns_pub_date(self, tmp_path):
         xml_path = tmp_path / "PPR_1.xml"
         _write_xml(xml_path, pub_date="2022-03-05")
         assert extract_metadata(xml_path)["pub_date"] == "2022-03-05"
+
+    def test_returns_license(self, tmp_path):
+        xml_path = tmp_path / "PPR_1.xml"
+        _write_xml(xml_path, license_url="https://creativecommons.org/licenses/by/4.0/")
+        assert (
+            extract_metadata(xml_path)["license"]
+            == "https://creativecommons.org/licenses/by/4.0/"
+        )
+
+    def test_returns_subject_categories(self, tmp_path):
+        xml_path = tmp_path / "PPR_1.xml"
+        _write_xml(
+            xml_path,
+            categories={"heading": "Article", "europepmc-category": "Covid-19"},
+        )
+        row = extract_metadata(xml_path)
+        assert row["subject_heading"] == "Article"
+        assert row["subject_europepmc_category"] == "Covid-19"
 
     def test_has_pdf_true_when_pdf_exists(self, tmp_path):
         xml_path = tmp_path / "PPR_1.xml"
@@ -297,7 +434,11 @@ class TestMain:
         assert len(records) == 3
 
     def test_jsonl_contains_expected_fields(self, tmp_path):
-        _write_xml(tmp_path / "PPR_42.xml", lang="es")
+        _write_xml(
+            tmp_path / "PPR_42.xml",
+            lang="es",
+            categories={"heading": "Article", "europepmc-category": "Covid-19"},
+        )
         out = tmp_path / "metadata.jsonl"
         main([str(tmp_path), str(out)])
         record = _read_jsonl(out)[0]
@@ -309,8 +450,11 @@ class TestMain:
             "language",
             "language_raw",
             "title",
-            "author_names",
+            "authors",
             "pub_date",
+            "license",
+            "subject_heading",
+            "subject_europepmc_category",
             "has_pdf",
             "xml_source_url",
             "xml_downloaded_at",
@@ -319,12 +463,14 @@ class TestMain:
             "pdf_downloaded_at",
         }
 
-    def test_author_names_is_list_in_jsonl(self, tmp_path):
+    def test_authors_is_list_of_dicts_in_jsonl(self, tmp_path):
         _write_xml(tmp_path / "PPR_1.xml", authors=["Jane Doe", "John Smith"])
         out = tmp_path / "metadata.jsonl"
         main([str(tmp_path), str(out)])
         record = _read_jsonl(out)[0]
-        assert record["author_names"] == ["Jane Doe", "John Smith"]
+        authors = record["authors"]
+        assert isinstance(authors, list)
+        assert [a["name"] for a in authors] == ["Jane Doe", "John Smith"]
 
     def test_exits_when_no_xml_files(self, tmp_path):
         with pytest.raises(SystemExit):

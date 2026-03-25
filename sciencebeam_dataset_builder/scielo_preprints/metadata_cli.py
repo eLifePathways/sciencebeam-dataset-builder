@@ -19,6 +19,7 @@ PROVENANCE_FIELDS = [
 LOGGER = logging.getLogger(__name__)
 
 XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace"
+ALI_NAMESPACE = "http://www.niso.org/schemas/ali/1.0/"
 
 # Non-standard language codes observed in SciELO records, mapped to ISO 639-1.
 LANGUAGE_NORMALISATION: dict[str, str] = {
@@ -40,6 +41,31 @@ def _extract_language(root: ET.Element) -> tuple[str, str]:
     return normalised, raw
 
 
+def _extract_aff_map(meta: ET.Element) -> dict[str, str]:
+    """Return a mapping of aff id → plain-text affiliation string.
+
+    The <label> child element (e.g. "1") is excluded, but its tail text
+    (which immediately follows the closing </label> tag) is kept because
+    that is where the actual affiliation string lives in most records.
+    """
+    aff_map: dict[str, str] = {}
+    for aff in meta.findall("aff"):
+        aff_id = aff.get("id", "")
+        if not aff_id:
+            continue
+        parts = []
+        if aff.text:
+            parts.append(aff.text)
+        for child in aff:
+            # Exclude the label's own text but keep its tail and all other children.
+            if child.tag != "label" and child.text:
+                parts.append(child.text)
+            if child.tail:
+                parts.append(child.tail)
+        aff_map[aff_id] = "".join(parts).strip()
+    return aff_map
+
+
 def _extract_article_meta(root: ET.Element) -> dict[str, Any]:
     _meta = root.find("front/article-meta")
     meta = _meta if _meta is not None else ET.Element("article-meta")
@@ -56,15 +82,33 @@ def _extract_article_meta(root: ET.Element) -> dict[str, Any]:
 
     title = (meta.findtext("title-group/article-title") or "").strip()
 
-    author_names: list[str] = []
+    aff_map = _extract_aff_map(meta)
+
+    authors: list[dict[str, Any]] = []
     for contrib in meta.findall("contrib-group/contrib"):
-        name = contrib.find("name")
-        if name is not None:
-            given = (name.findtext("given-names") or "").strip()
-            surname = (name.findtext("surname") or "").strip()
-            full = f"{given} {surname}".strip()
-            if full:
-                author_names.append(full)
+        name_elem = contrib.find("name")
+        if name_elem is None:
+            continue
+        given = (name_elem.findtext("given-names") or "").strip()
+        surname = (name_elem.findtext("surname") or "").strip()
+        full = f"{given} {surname}".strip()
+        if not full:
+            continue
+
+        orcid = ""
+        for cid in contrib.findall("contrib-id"):
+            if cid.get("contrib-id-type") == "orcid":
+                orcid = (cid.text or "").strip()
+                break
+
+        affiliations: list[str] = []
+        for xref in contrib.findall("xref"):
+            if xref.get("ref-type") == "aff":
+                rid = xref.get("rid", "")
+                if rid in aff_map:
+                    affiliations.append(aff_map[rid])
+
+        authors.append({"name": full, "orcid": orcid, "affiliations": affiliations})
 
     pub_date = ""
     for pd in meta.findall("pub-date"):
@@ -76,12 +120,28 @@ def _extract_article_meta(root: ET.Element) -> dict[str, Any]:
             pub_date = "-".join(parts)
             break
 
+    # License: prefer the ALI license_ref URL, fall back to empty string.
+    license_url = ""
+    for lr in meta.findall(f"permissions/license/{{{ALI_NAMESPACE}}}license_ref"):
+        license_url = (lr.text or "").strip()
+        break
+
+    # Article subject categories: one field per subj-group-type (hyphens → underscores).
+    subjects: dict[str, str] = {}
+    for sg in meta.findall("article-categories/subj-group"):
+        sg_type = sg.get("subj-group-type", "").replace("-", "_")
+        subject_text = (sg.findtext("subject") or "").strip()
+        if sg_type and subject_text:
+            subjects[f"subject_{sg_type}"] = subject_text
+
     return {
         "doi": doi,
         "version": version,
         "title": title,
-        "author_names": author_names,
+        "authors": authors,
         "pub_date": pub_date,
+        "license": license_url,
+        **subjects,
     }
 
 
