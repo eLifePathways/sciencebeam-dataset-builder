@@ -41,29 +41,27 @@ def _extract_language(root: ET.Element) -> tuple[str, str]:
     return normalised, raw
 
 
-def _extract_aff_map(meta: ET.Element) -> dict[str, str]:
-    """Return a mapping of aff id → plain-text affiliation string.
+def _aff_text(aff: ET.Element) -> str:
+    """Return plain-text content of an <aff> element, excluding any <label> child."""
+    parts = []
+    if aff.text:
+        parts.append(aff.text)
+    for child in aff:
+        # Exclude the label's own text but keep its tail and all other children.
+        if child.tag != "label" and child.text:
+            parts.append(child.text)
+        if child.tail:
+            parts.append(child.tail)
+    return "".join(parts).strip()
 
-    The <label> child element (e.g. "1") is excluded, but its tail text
-    (which immediately follows the closing </label> tag) is kept because
-    that is where the actual affiliation string lives in most records.
-    """
-    aff_map: dict[str, str] = {}
-    for aff in meta.findall("aff"):
-        aff_id = aff.get("id", "")
-        if not aff_id:
-            continue
-        parts = []
-        if aff.text:
-            parts.append(aff.text)
-        for child in aff:
-            # Exclude the label's own text but keep its tail and all other children.
-            if child.tag != "label" and child.text:
-                parts.append(child.text)
-            if child.tail:
-                parts.append(child.tail)
-        aff_map[aff_id] = "".join(parts).strip()
-    return aff_map
+
+def _extract_aff_map(meta: ET.Element) -> dict[str, str]:
+    """Return a mapping of aff id → plain-text affiliation string for top-level affs."""
+    return {
+        aff_id: _aff_text(aff)
+        for aff in meta.findall("aff")
+        if (aff_id := aff.get("id"))
+    }
 
 
 def _extract_article_meta(root: ET.Element) -> dict[str, Any]:
@@ -102,11 +100,18 @@ def _extract_article_meta(root: ET.Element) -> dict[str, Any]:
                 break
 
         affiliations: list[str] = []
+        # Pattern 1: xref links to a top-level <aff id="..."> element.
         for xref in contrib.findall("xref"):
             if xref.get("ref-type") == "aff":
                 rid = xref.get("rid", "")
                 if rid in aff_map:
                     affiliations.append(aff_map[rid])
+        # Pattern 2: <aff> is a direct child of <contrib> (no xref needed).
+        if not affiliations:
+            for aff in contrib.findall("aff"):
+                text = _aff_text(aff)
+                if text:
+                    affiliations.append(text)
 
         authors.append({"name": full, "orcid": orcid, "affiliations": affiliations})
 

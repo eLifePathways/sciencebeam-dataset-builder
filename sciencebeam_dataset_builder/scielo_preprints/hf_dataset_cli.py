@@ -19,8 +19,8 @@ import logging
 import sys
 from pathlib import Path
 
-import pyarrow as pa  # type: ignore[import-untyped]
-import pyarrow.parquet as pq  # type: ignore[import-untyped]
+import pyarrow as pa
+import pyarrow.parquet as pq
 from tqdm import tqdm
 
 LOGGER = logging.getLogger(__name__)

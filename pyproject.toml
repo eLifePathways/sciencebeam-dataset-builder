@@ -36,6 +36,10 @@ disallow_any_generics = false
 module = ["datasets", "datasets.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
+
 [dependency-groups]
 dev = [
     "datasets>=3.0",

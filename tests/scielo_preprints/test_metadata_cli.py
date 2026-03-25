@@ -239,6 +239,20 @@ class TestExtractArticleMeta:
             "Institute of Things",
         ]
 
+    def test_extracts_affiliation_directly_inside_contrib(self):
+        """<aff> as a direct child of <contrib> (no xref needed)."""
+        root = self._meta(
+            "<contrib-group>"
+            "<contrib contrib-type='author'>"
+            "<name><given-names>Jane</given-names><surname>Doe</surname></name>"
+            "<aff>University of Somewhere</aff>"
+            "</contrib>"
+            "</contrib-group>"
+        )
+        assert _extract_article_meta(root)["authors"][0]["affiliations"] == [
+            "University of Somewhere"
+        ]
+
     def test_author_affiliations_empty_when_no_xref(self):
         root = self._meta(
             "<contrib-group>"
