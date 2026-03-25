@@ -131,6 +131,14 @@ def _extract_article_meta(root: ET.Element) -> dict[str, Any]:
         license_url = (lr.text or "").strip()
         break
 
+    # Keywords: collect from all kwd-group elements.
+    keywords: list[str] = [
+        kw.text.strip()
+        for kg in meta.findall("kwd-group")
+        for kw in kg.findall("kwd")
+        if kw.text and kw.text.strip()
+    ]
+
     # Article subject categories: one field per subj-group-type (hyphens → underscores).
     subjects: dict[str, str] = {}
     for sg in meta.findall("article-categories/subj-group"):
@@ -146,6 +154,7 @@ def _extract_article_meta(root: ET.Element) -> dict[str, Any]:
         "authors": authors,
         "pub_date": pub_date,
         "license": license_url,
+        "keywords": keywords,
         **subjects,
     }
 
@@ -171,7 +180,6 @@ def extract_metadata(xml_path: Path) -> dict[str, Any]:
         "article_type": article_type,
         "language": language,
         "language_raw": language_raw,
-        "has_pdf": xml_path.with_suffix(".pdf").exists(),
         **{field: provenance.get(field, None) for field in PROVENANCE_FIELDS},
     }
 

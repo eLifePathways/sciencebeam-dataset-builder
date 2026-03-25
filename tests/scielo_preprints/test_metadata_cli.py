@@ -30,6 +30,7 @@ def _write_xml(
     pub_date: str = "",
     license_url: str = "",
     categories: dict[str, str] | None = None,
+    keywords: list[str] | None = None,
 ) -> None:
     """Write a minimal article XML file with optional metadata.
 
@@ -88,13 +89,17 @@ def _write_xml(
             for sg_type, subject in categories.items()
         )
         categories_xml = f"<article-categories>{groups}</article-categories>"
+    keywords_xml = ""
+    if keywords:
+        kwds = "".join(f"<kwd>{kw}</kwd>" for kw in keywords)
+        keywords_xml = f'<kwd-group xml:lang="en">{kwds}</kwd-group>'
 
     path.write_text(
         f'<?xml version="1.0" encoding="UTF-8"?>'
         f"<article{lang_part}{type_part}>"
         f"<front><article-meta>"
         f"{doi_xml}{version_xml}{title_xml}{authors_xml}{pub_date_xml}"
-        f"{license_xml}{categories_xml}"
+        f"{license_xml}{categories_xml}{keywords_xml}"
         f"</article-meta></front>"
         f"</article>",
         encoding="utf-8",
@@ -314,6 +319,7 @@ class TestExtractArticleMeta:
         assert result["authors"] == []
         assert result["pub_date"] == ""
         assert result["license"] == ""
+        assert result["keywords"] == []
 
 
 class TestExtractMetadata:
@@ -379,16 +385,19 @@ class TestExtractMetadata:
         assert row["subject_heading"] == "Article"
         assert row["subject_europepmc_category"] == "Covid-19"
 
-    def test_has_pdf_true_when_pdf_exists(self, tmp_path):
+    def test_returns_keywords(self, tmp_path):
         xml_path = tmp_path / "PPR_1.xml"
-        _write_xml(xml_path)
-        (tmp_path / "PPR_1.pdf").write_bytes(b"%PDF")
-        assert extract_metadata(xml_path)["has_pdf"] is True
+        _write_xml(xml_path, keywords=["COVID-19", "Paraguay", "Attitudes"])
+        assert extract_metadata(xml_path)["keywords"] == [
+            "COVID-19",
+            "Paraguay",
+            "Attitudes",
+        ]
 
-    def test_has_pdf_false_when_pdf_missing(self, tmp_path):
+    def test_returns_empty_keywords_when_absent(self, tmp_path):
         xml_path = tmp_path / "PPR_1.xml"
         _write_xml(xml_path)
-        assert extract_metadata(xml_path)["has_pdf"] is False
+        assert extract_metadata(xml_path)["keywords"] == []
 
 
 class TestExtractMetadataProvenance:
@@ -467,9 +476,9 @@ class TestMain:
             "authors",
             "pub_date",
             "license",
+            "keywords",
             "subject_heading",
             "subject_europepmc_category",
-            "has_pdf",
             "xml_source_url",
             "xml_downloaded_at",
             "xml_ftfy_applied",
