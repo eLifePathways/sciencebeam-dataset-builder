@@ -8,6 +8,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
+import ftfy
+
 LOGGER = logging.getLogger(__name__)
 
 XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace"
@@ -24,7 +26,18 @@ LANGUAGE_NORMALISATION: dict[str, str] = {
     "de": "de",
 }
 
-METADATA_FIELDS = ["ppr_id", "language", "language_raw", "has_pdf"]
+METADATA_FIELDS = [
+    "ppr_id",
+    "doi",
+    "version",
+    "article_type",
+    "language",
+    "language_raw",
+    "title",
+    "author_names",
+    "pub_date",
+    "has_pdf",
+]
 
 
 def _extract_language(root: ET.Element) -> tuple[str, str]:
@@ -34,13 +47,62 @@ def _extract_language(root: ET.Element) -> tuple[str, str]:
     return normalised, raw
 
 
+def _extract_article_meta(root: ET.Element) -> dict[str, Any]:
+    _meta = root.find("front/article-meta")
+    meta = _meta if _meta is not None else ET.Element("article-meta")
+
+    doi = ""
+    for id_elem in meta.findall("article-id"):
+        if id_elem.get("pub-id-type") == "doi":
+            doi = (id_elem.text or "").strip()
+
+    version = ""
+    for v in meta.findall("article-version-alternatives/article-version"):
+        if v.get("article-version-type") == "number":
+            version = (v.text or "").strip()
+
+    title = ftfy.fix_text((meta.findtext("title-group/article-title") or "").strip())
+
+    author_names: list[str] = []
+    for contrib in meta.findall("contrib-group/contrib"):
+        name = contrib.find("name")
+        if name is not None:
+            given = ftfy.fix_text((name.findtext("given-names") or "").strip())
+            surname = ftfy.fix_text((name.findtext("surname") or "").strip())
+            full = f"{given} {surname}".strip()
+            if full:
+                author_names.append(full)
+
+    pub_date = ""
+    for pd in meta.findall("pub-date"):
+        if pd.get("pub-type") == "preprint":
+            year = pd.findtext("year") or ""
+            month = pd.findtext("month") or ""
+            day = pd.findtext("day") or ""
+            parts = [p for p in (year, month.zfill(2), day.zfill(2)) if p]
+            pub_date = "-".join(parts)
+            break
+
+    return {
+        "doi": doi,
+        "version": version,
+        "title": title,
+        "author_names": "; ".join(author_names),
+        "pub_date": pub_date,
+    }
+
+
 def extract_metadata(xml_path: Path) -> dict[str, Any]:
     ppr_id = xml_path.stem
     tree = ET.parse(xml_path)
     root = tree.getroot()
     language, language_raw = _extract_language(root)
+    article_type = root.get("article-type", "")
+    article_meta = _extract_article_meta(root)
     return {
         "ppr_id": ppr_id,
+        **article_meta,
+        "article_type": article_type,
         "language": language,
         "language_raw": language_raw,
         "has_pdf": xml_path.with_suffix(".pdf").exists(),

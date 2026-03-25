@@ -12,18 +12,63 @@ from sciencebeam_dataset_builder.scielo_preprints.metadata_cli import (
     main,
     parse_args,
     _extract_language,
+    _extract_article_meta,
 )
 
 
 def _write_xml(
-    path: Path, lang: str | None = "pt", lang_attr: str = "xml:lang"
+    path: Path,
+    lang: str | None = "pt",
+    lang_attr: str = "xml:lang",
+    article_type: str = "preprint",
+    doi: str = "",
+    version: str = "",
+    title: str = "",
+    authors: list[str] | None = None,
+    pub_date: str = "",
 ) -> None:
-    """Write a minimal article XML file with optional language attribute."""
+    """Write a minimal article XML file with optional metadata."""
     lang_part = f' {lang_attr}="{lang}"' if lang is not None else ""
+    type_part = f' article-type="{article_type}"' if article_type else ""
+
+    doi_xml = f'<article-id pub-id-type="doi">{doi}</article-id>' if doi else ""
+    version_xml = (
+        f"<article-version-alternatives>"
+        f'<article-version article-version-type="number">{version}</article-version>'
+        f"</article-version-alternatives>"
+        if version
+        else ""
+    )
+    title_xml = (
+        f"<title-group><article-title>{title}</article-title></title-group>"
+        if title
+        else ""
+    )
+    authors_xml = ""
+    if authors:
+        contribs = "".join(
+            f"<contrib contrib-type='author'><name>"
+            f"<given-names>{a.split()[0]}</given-names>"
+            f"<surname>{' '.join(a.split()[1:])}</surname>"
+            f"</name></contrib>"
+            for a in authors
+        )
+        authors_xml = f"<contrib-group>{contribs}</contrib-group>"
+    pub_date_xml = ""
+    if pub_date:
+        y, m, d = pub_date.split("-")
+        pub_date_xml = (
+            f'<pub-date pub-type="preprint">'
+            f"<year>{y}</year><month>{m}</month><day>{d}</day>"
+            f"</pub-date>"
+        )
+
     path.write_text(
         f'<?xml version="1.0" encoding="UTF-8"?>'
-        f"<article{lang_part}>"
-        f"<front><article-meta/></front>"
+        f"<article{lang_part}{type_part}>"
+        f"<front><article-meta>"
+        f"{doi_xml}{version_xml}{title_xml}{authors_xml}{pub_date_xml}"
+        f"</article-meta></front>"
         f"</article>",
         encoding="utf-8",
     )
@@ -76,6 +121,76 @@ class TestLanguageNormalisation:
         assert LANGUAGE_NORMALISATION["PT"] == "pt"
 
 
+class TestExtractArticleMeta:
+    def _meta(self, xml: str) -> ET.Element:
+        return ET.fromstring(
+            f"<article><front><article-meta>{xml}</article-meta></front></article>"
+        )
+
+    def test_extracts_doi(self):
+        root = self._meta('<article-id pub-id-type="doi">10.1234/test</article-id>')
+        assert _extract_article_meta(root)["doi"] == "10.1234/test"
+
+    def test_extracts_version(self):
+        root = self._meta(
+            "<article-version-alternatives>"
+            '<article-version article-version-type="number">2</article-version>'
+            "</article-version-alternatives>"
+        )
+        assert _extract_article_meta(root)["version"] == "2"
+
+    def test_extracts_title(self):
+        root = self._meta(
+            "<title-group><article-title>My Title</article-title></title-group>"
+        )
+        assert _extract_article_meta(root)["title"] == "My Title"
+
+    def test_extracts_author_names(self):
+        root = self._meta(
+            "<contrib-group>"
+            "<contrib contrib-type='author'><name>"
+            "<given-names>Jane</given-names><surname>Doe</surname>"
+            "</name></contrib>"
+            "<contrib contrib-type='author'><name>"
+            "<given-names>John</given-names><surname>Smith</surname>"
+            "</name></contrib>"
+            "</contrib-group>"
+        )
+        assert _extract_article_meta(root)["author_names"] == "Jane Doe; John Smith"
+
+    def test_extracts_pub_date(self):
+        root = self._meta(
+            '<pub-date pub-type="preprint">'
+            "<year>2022</year><month>3</month><day>5</day>"
+            "</pub-date>"
+        )
+        assert _extract_article_meta(root)["pub_date"] == "2022-03-05"
+
+    def test_fixes_mojibake_in_title(self):
+        # "Jesús" stored as mojibake "JesÃºs" (UTF-8 bytes mis-decoded as Latin-1)
+        root = self._meta(
+            "<title-group><article-title>JesÃºs</article-title></title-group>"
+        )
+        assert _extract_article_meta(root)["title"] == "Jesús"
+
+    def test_fixes_mojibake_in_author_names(self):
+        root = self._meta(
+            "<contrib-group><contrib contrib-type='author'><name>"
+            "<given-names>JesÃºs</given-names><surname>SÃ¡nchez</surname>"
+            "</name></contrib></contrib-group>"
+        )
+        assert _extract_article_meta(root)["author_names"] == "Jesús Sánchez"
+
+    def test_returns_empty_strings_when_fields_missing(self):
+        root = ET.fromstring("<article><front><article-meta/></front></article>")
+        result = _extract_article_meta(root)
+        assert result["doi"] == ""
+        assert result["version"] == ""
+        assert result["title"] == ""
+        assert result["author_names"] == ""
+        assert result["pub_date"] == ""
+
+
 class TestExtractMetadata:
     def test_returns_ppr_id_from_filename(self, tmp_path):
         xml_path = tmp_path / "PPR_123.xml"
@@ -89,6 +204,36 @@ class TestExtractMetadata:
         row = extract_metadata(xml_path)
         assert row["language"] == "pt"
         assert row["language_raw"] == "po"
+
+    def test_returns_article_type(self, tmp_path):
+        xml_path = tmp_path / "PPR_1.xml"
+        _write_xml(xml_path, article_type="preprint")
+        assert extract_metadata(xml_path)["article_type"] == "preprint"
+
+    def test_returns_doi(self, tmp_path):
+        xml_path = tmp_path / "PPR_1.xml"
+        _write_xml(xml_path, doi="10.1234/test")
+        assert extract_metadata(xml_path)["doi"] == "10.1234/test"
+
+    def test_returns_version(self, tmp_path):
+        xml_path = tmp_path / "PPR_1.xml"
+        _write_xml(xml_path, version="3")
+        assert extract_metadata(xml_path)["version"] == "3"
+
+    def test_returns_title(self, tmp_path):
+        xml_path = tmp_path / "PPR_1.xml"
+        _write_xml(xml_path, title="My Article")
+        assert extract_metadata(xml_path)["title"] == "My Article"
+
+    def test_returns_author_names(self, tmp_path):
+        xml_path = tmp_path / "PPR_1.xml"
+        _write_xml(xml_path, authors=["Jane Doe", "John Smith"])
+        assert extract_metadata(xml_path)["author_names"] == "Jane Doe; John Smith"
+
+    def test_returns_pub_date(self, tmp_path):
+        xml_path = tmp_path / "PPR_1.xml"
+        _write_xml(xml_path, pub_date="2022-03-05")
+        assert extract_metadata(xml_path)["pub_date"] == "2022-03-05"
 
     def test_has_pdf_true_when_pdf_exists(self, tmp_path):
         xml_path = tmp_path / "PPR_1.xml"
@@ -131,7 +276,18 @@ class TestMain:
         out = tmp_path / "metadata.csv"
         main([str(tmp_path), str(out)])
         row = list(csv.DictReader(out.open()))[0]
-        assert set(row.keys()) == {"ppr_id", "language", "language_raw", "has_pdf"}
+        assert set(row.keys()) == {
+            "ppr_id",
+            "doi",
+            "version",
+            "article_type",
+            "language",
+            "language_raw",
+            "title",
+            "author_names",
+            "pub_date",
+            "has_pdf",
+        }
 
     def test_exits_when_no_xml_files(self, tmp_path):
         with pytest.raises(SystemExit):
