@@ -1,7 +1,8 @@
-"""Generate a stratified train/val/test split from a metadata CSV."""
+"""Generate a stratified train/val/test split from a metadata JSONL file."""
 
 import argparse
 import csv
+import json
 import logging
 import random
 import sys
@@ -64,12 +65,12 @@ def stratified_split(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate a stratified train/val/test split from a metadata CSV."
+        description="Generate a stratified train/val/test split from a metadata JSONL file."
     )
     parser.add_argument(
-        "metadata_csv",
+        "metadata_jsonl",
         type=Path,
-        help="Metadata CSV produced by scielo_preprints_metadata_cli.",
+        help="Metadata JSONL produced by scielo_preprints_metadata_cli.",
     )
     parser.add_argument(
         "output_csv",
@@ -114,11 +115,11 @@ def main(argv: list[str] | None = None) -> None:
         print("--train + --val must be less than 1.0", file=sys.stderr)
         sys.exit(1)
 
-    with args.metadata_csv.open(newline="", encoding="utf-8") as f:
-        records = list(csv.DictReader(f))
+    with args.metadata_jsonl.open(encoding="utf-8") as f:
+        records = [json.loads(line) for line in f if line.strip()]
 
     if not records:
-        print(f"No records found in {args.metadata_csv}", file=sys.stderr)
+        print(f"No records found in {args.metadata_jsonl}", file=sys.stderr)
         sys.exit(1)
 
     result = stratified_split(records, args.train, args.val, args.seed)

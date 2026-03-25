@@ -1,7 +1,7 @@
-"""Extract metadata from downloaded SciELO preprint XML files into a CSV."""
+"""Extract metadata from downloaded SciELO preprint XML files into a JSONL file."""
 
 import argparse
-import csv
+import json
 import logging
 import sys
 import xml.etree.ElementTree as ET
@@ -25,19 +25,6 @@ LANGUAGE_NORMALISATION: dict[str, str] = {
     "fr": "fr",
     "de": "de",
 }
-
-METADATA_FIELDS = [
-    "ppr_id",
-    "doi",
-    "version",
-    "article_type",
-    "language",
-    "language_raw",
-    "title",
-    "author_names",
-    "pub_date",
-    "has_pdf",
-]
 
 
 def _extract_language(root: ET.Element) -> tuple[str, str]:
@@ -87,7 +74,7 @@ def _extract_article_meta(root: ET.Element) -> dict[str, Any]:
         "doi": doi,
         "version": version,
         "title": title,
-        "author_names": "; ".join(author_names),
+        "author_names": author_names,
         "pub_date": pub_date,
     }
 
@@ -111,7 +98,7 @@ def extract_metadata(xml_path: Path) -> dict[str, Any]:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Extract metadata from SciELO preprint XML files into a CSV."
+        description="Extract metadata from SciELO preprint XML files into a JSONL file."
     )
     parser.add_argument(
         "input_dir",
@@ -119,9 +106,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Directory containing PPR_*.xml files.",
     )
     parser.add_argument(
-        "output_csv",
+        "output_jsonl",
         type=Path,
-        help="Path to write the metadata CSV.",
+        help="Path to write the metadata JSONL file.",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
     return parser.parse_args(argv)
@@ -141,19 +128,19 @@ def main(argv: list[str] | None = None) -> None:
         print(f"No PPR_*.xml files found in {args.input_dir}", file=sys.stderr)
         sys.exit(1)
 
-    args.output_csv.parent.mkdir(parents=True, exist_ok=True)
+    args.output_jsonl.parent.mkdir(parents=True, exist_ok=True)
 
-    with args.output_csv.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=METADATA_FIELDS)
-        writer.writeheader()
+    written = 0
+    with args.output_jsonl.open("w", encoding="utf-8") as f:
         for xml_path in xml_paths:
             try:
-                row = extract_metadata(xml_path)
-                writer.writerow(row)
+                record = extract_metadata(xml_path)
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                written += 1
             except ET.ParseError as exc:
                 LOGGER.warning("Failed to parse %s: %s", xml_path.name, exc)
 
-    print(f"Wrote metadata for {len(xml_paths)} documents to {args.output_csv}")
+    print(f"Wrote metadata for {written} documents to {args.output_jsonl}")
 
 
 if __name__ == "__main__":

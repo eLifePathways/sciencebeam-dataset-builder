@@ -1,6 +1,6 @@
 """Tests for scielo_preprints.metadata_cli module."""
 
-import csv
+import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -74,6 +74,14 @@ def _write_xml(
     )
 
 
+def _read_jsonl(path: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
 class TestExtractLanguage:
     def _root(self, lang: str | None) -> ET.Element:
         lang_part = f' xml:lang="{lang}"' if lang is not None else ""
@@ -145,7 +153,7 @@ class TestExtractArticleMeta:
         )
         assert _extract_article_meta(root)["title"] == "My Title"
 
-    def test_extracts_author_names(self):
+    def test_extracts_author_names_as_list(self):
         root = self._meta(
             "<contrib-group>"
             "<contrib contrib-type='author'><name>"
@@ -156,7 +164,7 @@ class TestExtractArticleMeta:
             "</name></contrib>"
             "</contrib-group>"
         )
-        assert _extract_article_meta(root)["author_names"] == "Jane Doe; John Smith"
+        assert _extract_article_meta(root)["author_names"] == ["Jane Doe", "John Smith"]
 
     def test_extracts_pub_date(self):
         root = self._meta(
@@ -179,15 +187,15 @@ class TestExtractArticleMeta:
             "<given-names>JesÃºs</given-names><surname>SÃ¡nchez</surname>"
             "</name></contrib></contrib-group>"
         )
-        assert _extract_article_meta(root)["author_names"] == "Jesús Sánchez"
+        assert _extract_article_meta(root)["author_names"] == ["Jesús Sánchez"]
 
-    def test_returns_empty_strings_when_fields_missing(self):
+    def test_returns_empty_values_when_fields_missing(self):
         root = ET.fromstring("<article><front><article-meta/></front></article>")
         result = _extract_article_meta(root)
         assert result["doi"] == ""
         assert result["version"] == ""
         assert result["title"] == ""
-        assert result["author_names"] == ""
+        assert result["author_names"] == []
         assert result["pub_date"] == ""
 
 
@@ -225,10 +233,10 @@ class TestExtractMetadata:
         _write_xml(xml_path, title="My Article")
         assert extract_metadata(xml_path)["title"] == "My Article"
 
-    def test_returns_author_names(self, tmp_path):
+    def test_returns_author_names_as_list(self, tmp_path):
         xml_path = tmp_path / "PPR_1.xml"
         _write_xml(xml_path, authors=["Jane Doe", "John Smith"])
-        assert extract_metadata(xml_path)["author_names"] == "Jane Doe; John Smith"
+        assert extract_metadata(xml_path)["author_names"] == ["Jane Doe", "John Smith"]
 
     def test_returns_pub_date(self, tmp_path):
         xml_path = tmp_path / "PPR_1.xml"
@@ -248,35 +256,35 @@ class TestExtractMetadata:
 
 
 class TestParseArgs:
-    def test_requires_input_dir_and_output_csv(self):
+    def test_requires_input_dir_and_output_jsonl(self):
         with pytest.raises(SystemExit):
             parse_args([])
 
     def test_parses_positional_args(self, tmp_path):
-        args = parse_args([str(tmp_path), str(tmp_path / "out.csv")])
+        args = parse_args([str(tmp_path), str(tmp_path / "out.jsonl")])
         assert args.input_dir == tmp_path
-        assert args.output_csv == tmp_path / "out.csv"
+        assert args.output_jsonl == tmp_path / "out.jsonl"
 
     def test_debug_default_false(self, tmp_path):
-        args = parse_args([str(tmp_path), str(tmp_path / "out.csv")])
+        args = parse_args([str(tmp_path), str(tmp_path / "out.jsonl")])
         assert args.debug is False
 
 
 class TestMain:
-    def test_writes_csv_with_one_row_per_xml(self, tmp_path):
+    def test_writes_jsonl_with_one_record_per_xml(self, tmp_path):
         for i in (1, 2, 3):
             _write_xml(tmp_path / f"PPR_{i}.xml", lang="pt")
-        out = tmp_path / "metadata.csv"
+        out = tmp_path / "metadata.jsonl"
         main([str(tmp_path), str(out)])
-        rows = list(csv.DictReader(out.open()))
-        assert len(rows) == 3
+        records = _read_jsonl(out)
+        assert len(records) == 3
 
-    def test_csv_contains_expected_fields(self, tmp_path):
+    def test_jsonl_contains_expected_fields(self, tmp_path):
         _write_xml(tmp_path / "PPR_42.xml", lang="es")
-        out = tmp_path / "metadata.csv"
+        out = tmp_path / "metadata.jsonl"
         main([str(tmp_path), str(out)])
-        row = list(csv.DictReader(out.open()))[0]
-        assert set(row.keys()) == {
+        record = _read_jsonl(out)[0]
+        assert set(record.keys()) == {
             "ppr_id",
             "doi",
             "version",
@@ -289,15 +297,22 @@ class TestMain:
             "has_pdf",
         }
 
+    def test_author_names_is_list_in_jsonl(self, tmp_path):
+        _write_xml(tmp_path / "PPR_1.xml", authors=["Jane Doe", "John Smith"])
+        out = tmp_path / "metadata.jsonl"
+        main([str(tmp_path), str(out)])
+        record = _read_jsonl(out)[0]
+        assert record["author_names"] == ["Jane Doe", "John Smith"]
+
     def test_exits_when_no_xml_files(self, tmp_path):
         with pytest.raises(SystemExit):
-            main([str(tmp_path), str(tmp_path / "out.csv")])
+            main([str(tmp_path), str(tmp_path / "out.jsonl")])
 
     def test_skips_unparseable_xml(self, tmp_path):
         (tmp_path / "PPR_1.xml").write_text("not xml", encoding="utf-8")
         _write_xml(tmp_path / "PPR_2.xml", lang="pt")
-        out = tmp_path / "metadata.csv"
+        out = tmp_path / "metadata.jsonl"
         main([str(tmp_path), str(out)])
-        rows = list(csv.DictReader(out.open()))
-        assert len(rows) == 1
-        assert rows[0]["ppr_id"] == "PPR_2"
+        records = _read_jsonl(out)
+        assert len(records) == 1
+        assert records[0]["ppr_id"] == "PPR_2"

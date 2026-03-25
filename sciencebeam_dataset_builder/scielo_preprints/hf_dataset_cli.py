@@ -14,7 +14,7 @@ Schema per row:
 """
 
 import argparse
-import csv
+import json
 import logging
 import sys
 from pathlib import Path
@@ -38,15 +38,15 @@ SCHEMA = pa.schema(
 )
 
 
-def _read_csv(path: Path) -> list[dict[str, str]]:
-    with path.open(newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+def _read_jsonl(path: Path) -> list[dict[str, object]]:
+    with path.open(encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
 
 
 def _build_split_batches(
     documents_dir: Path,
-    split_rows: list[dict[str, str]],
-    metadata_by_id: dict[str, dict[str, str]],
+    split_rows: list[dict[str, object]],
+    metadata_by_id: dict[str, dict[str, object]],
 ) -> pa.Table:
     ppr_ids: list[str] = []
     languages: list[str] = []
@@ -54,7 +54,7 @@ def _build_split_batches(
     pdfs: list[bytes] = []
 
     for row in tqdm(split_rows, unit=" docs", leave=False):
-        ppr_id = row["ppr_id"]
+        ppr_id = str(row["ppr_id"])
         xml_path = documents_dir / f"{ppr_id}.xml"
         pdf_path = documents_dir / f"{ppr_id}.pdf"
 
@@ -64,7 +64,7 @@ def _build_split_batches(
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
         ppr_ids.append(ppr_id)
-        languages.append(metadata_by_id.get(ppr_id, {}).get("language", ""))
+        languages.append(str(metadata_by_id.get(ppr_id, {}).get("language", "")))
         xmls.append(xml_path.read_text(encoding="utf-8"))
         pdfs.append(pdf_path.read_bytes())
 
@@ -89,9 +89,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Split CSV produced by dataset_split_cli (columns: ppr_id, split).",
     )
     parser.add_argument(
-        "metadata_csv",
+        "metadata_jsonl",
         type=Path,
-        help="Metadata CSV produced by scielo_preprints_metadata_cli.",
+        help="Metadata JSONL produced by scielo_preprints_metadata_cli.",
     )
     parser.add_argument(
         "output_dir",
@@ -111,12 +111,12 @@ def main(argv: list[str] | None = None) -> None:
         stream=sys.stderr,
     )
 
-    split_rows = _read_csv(args.split_csv)
-    metadata_by_id = {r["ppr_id"]: r for r in _read_csv(args.metadata_csv)}
+    split_rows = _read_jsonl(args.split_csv)
+    metadata_by_id = {str(r["ppr_id"]): r for r in _read_jsonl(args.metadata_jsonl)}
 
-    by_split: dict[str, list[dict[str, str]]] = {}
+    by_split: dict[str, list[dict[str, object]]] = {}
     for row in split_rows:
-        by_split.setdefault(row["split"], []).append(row)
+        by_split.setdefault(str(row["split"]), []).append(row)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 

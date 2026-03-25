@@ -35,18 +35,18 @@ scielo-preprints-retrieve:
 
 scielo-preprints-metadata:
 	uv run -m sciencebeam_dataset_builder.scielo_preprints.metadata_cli \
-		$(OUTPUT_DIR)/scielo-preprints $(OUTPUT_DIR)/scielo-preprints-metadata.csv
+		$(OUTPUT_DIR)/scielo-preprints $(OUTPUT_DIR)/scielo-preprints-metadata.jsonl
 
 scielo-preprints-hf-dataset:
 	uv run -m sciencebeam_dataset_builder.scielo_preprints.hf_dataset_cli \
 		$(OUTPUT_DIR)/scielo-preprints \
 		$(OUTPUT_DIR)/scielo-preprints-split.csv \
-		$(OUTPUT_DIR)/scielo-preprints-metadata.csv \
+		$(OUTPUT_DIR)/scielo-preprints-metadata.jsonl \
 		$(OUTPUT_DIR)/scielo-preprints-hf-dataset $(RUN_ARGS)
 
 scielo-preprints-split:
 	uv run -m sciencebeam_dataset_builder.scielo_preprints.split_cli \
-		$(OUTPUT_DIR)/scielo-preprints-metadata.csv \
+		$(OUTPUT_DIR)/scielo-preprints-metadata.jsonl \
 		$(OUTPUT_DIR)/scielo-preprints-split.csv $(SPLIT_ARGS)
 
 scielo-preprints-upload-to-hf:

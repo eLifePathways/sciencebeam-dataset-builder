@@ -1,6 +1,7 @@
 """Tests for scielo_preprints.split_cli module."""
 
 import csv
+import json
 from collections import Counter
 from pathlib import Path
 
@@ -20,11 +21,10 @@ def _records(languages: list[str]) -> list[dict[str, str]]:
     ]
 
 
-def _write_metadata_csv(path: Path, languages: list[str]) -> None:
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["ppr_id", "language"])
-        writer.writeheader()
-        writer.writerows(_records(languages))
+def _write_metadata_jsonl(path: Path, languages: list[str]) -> None:
+    with path.open("w", encoding="utf-8") as f:
+        for record in _records(languages):
+            f.write(json.dumps(record) + "\n")
 
 
 class TestStratum:
@@ -103,7 +103,7 @@ class TestParseArgs:
             parse_args([])
 
     def test_defaults(self, tmp_path):
-        args = parse_args([str(tmp_path / "meta.csv"), str(tmp_path / "split.csv")])
+        args = parse_args([str(tmp_path / "meta.jsonl"), str(tmp_path / "split.csv")])
         assert args.train == 0.2
         assert args.val == 0.3
         assert args.seed == 42
@@ -111,7 +111,7 @@ class TestParseArgs:
     def test_custom_fractions(self, tmp_path):
         args = parse_args(
             [
-                str(tmp_path / "meta.csv"),
+                str(tmp_path / "meta.jsonl"),
                 str(tmp_path / "split.csv"),
                 "--train",
                 "0.1",
@@ -125,8 +125,8 @@ class TestParseArgs:
 
 class TestMain:
     def test_writes_split_csv(self, tmp_path):
-        meta = tmp_path / "meta.csv"
-        _write_metadata_csv(meta, ["pt"] * 20 + ["es"] * 10)
+        meta = tmp_path / "meta.jsonl"
+        _write_metadata_jsonl(meta, ["pt"] * 20 + ["es"] * 10)
         out = tmp_path / "split.csv"
         main([str(meta), str(out)])
         rows = list(csv.DictReader(out.open()))
@@ -134,15 +134,15 @@ class TestMain:
         assert all(r["split"] in {"train", "val", "test"} for r in rows)
 
     def test_exits_when_fractions_sum_to_one(self, tmp_path):
-        meta = tmp_path / "meta.csv"
-        _write_metadata_csv(meta, ["pt"] * 10)
+        meta = tmp_path / "meta.jsonl"
+        _write_metadata_jsonl(meta, ["pt"] * 10)
         with pytest.raises(SystemExit):
             main(
                 [str(meta), str(tmp_path / "out.csv"), "--train", "0.5", "--val", "0.5"]
             )
 
     def test_exits_when_metadata_empty(self, tmp_path):
-        meta = tmp_path / "meta.csv"
-        meta.write_text("ppr_id,language\n", encoding="utf-8")
+        meta = tmp_path / "meta.jsonl"
+        meta.write_text("", encoding="utf-8")
         with pytest.raises(SystemExit):
             main([str(meta), str(tmp_path / "out.csv")])
