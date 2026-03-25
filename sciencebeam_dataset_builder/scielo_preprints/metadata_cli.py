@@ -10,6 +10,13 @@ from typing import Any
 
 import ftfy
 
+PROVENANCE_FIELDS = [
+    "xml_source_url",
+    "xml_downloaded_at",
+    "pdf_source_url",
+    "pdf_downloaded_at",
+]
+
 LOGGER = logging.getLogger(__name__)
 
 XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace"
@@ -79,6 +86,13 @@ def _extract_article_meta(root: ET.Element) -> dict[str, Any]:
     }
 
 
+def _load_provenance(xml_path: Path) -> dict[str, str]:
+    provenance_path = xml_path.with_suffix(".provenance.json")
+    if not provenance_path.exists():
+        return {}
+    return json.loads(provenance_path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+
+
 def extract_metadata(xml_path: Path) -> dict[str, Any]:
     ppr_id = xml_path.stem
     tree = ET.parse(xml_path)
@@ -86,6 +100,7 @@ def extract_metadata(xml_path: Path) -> dict[str, Any]:
     language, language_raw = _extract_language(root)
     article_type = root.get("article-type", "")
     article_meta = _extract_article_meta(root)
+    provenance = _load_provenance(xml_path)
     return {
         "ppr_id": ppr_id,
         **article_meta,
@@ -93,6 +108,7 @@ def extract_metadata(xml_path: Path) -> dict[str, Any]:
         "language": language,
         "language_raw": language_raw,
         "has_pdf": xml_path.with_suffix(".pdf").exists(),
+        **{field: provenance.get(field, "") for field in PROVENANCE_FIELDS},
     }
 
 

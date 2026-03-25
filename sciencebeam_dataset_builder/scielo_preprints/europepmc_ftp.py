@@ -87,8 +87,8 @@ def _iter_articles_from_stream(
 def iter_articles_for_ids(
     batch_files: list[BatchFile],
     target_ids: set[int],
-) -> Iterator[tuple[int, str]]:
-    """Stream relevant batch files and yield (ppr_id, xml_str) for each target ID found."""
+) -> Iterator[tuple[int, str, str]]:
+    """Stream relevant batch files and yield (ppr_id, xml_str, batch_url) for each target ID found."""
     for batch_file in batch_files:
         ids_in_batch = {
             id_ for id_ in target_ids if batch_file.start_id <= id_ <= batch_file.end_id
@@ -110,4 +110,7 @@ def iter_articles_for_ids(
         response.raw.decode_content = True
 
         with gzip.open(response.raw, "rb") as gz_f:
-            yield from _iter_articles_from_stream(cast(IO[bytes], gz_f), ids_in_batch)
+            for ppr_id, xml_str in _iter_articles_from_stream(
+                cast(IO[bytes], gz_f), ids_in_batch
+            ):
+                yield ppr_id, xml_str, batch_file.url

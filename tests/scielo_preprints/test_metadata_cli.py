@@ -255,6 +255,35 @@ class TestExtractMetadata:
         assert extract_metadata(xml_path)["has_pdf"] is False
 
 
+class TestExtractMetadataProvenance:
+    def test_provenance_fields_empty_when_no_sidecar(self, tmp_path):
+        xml_path = tmp_path / "PPR_1.xml"
+        _write_xml(xml_path)
+        row = extract_metadata(xml_path)
+        assert row["xml_source_url"] == ""
+        assert row["xml_downloaded_at"] == ""
+        assert row["pdf_source_url"] == ""
+        assert row["pdf_downloaded_at"] == ""
+
+    def test_provenance_fields_populated_from_sidecar(self, tmp_path):
+        xml_path = tmp_path / "PPR_1.xml"
+        _write_xml(xml_path)
+        sidecar = {
+            "xml_source_url": "https://europepmc.org/ftp/preprint_fulltext/PPR1_PPR100.xml.gz",
+            "xml_downloaded_at": "2024-01-15T10:30:00+00:00",
+            "pdf_source_url": "https://example.com/PPR1.pdf",
+            "pdf_downloaded_at": "2024-01-15T10:30:05+00:00",
+        }
+        (tmp_path / "PPR_1.provenance.json").write_text(
+            json.dumps(sidecar), encoding="utf-8"
+        )
+        row = extract_metadata(xml_path)
+        assert row["xml_source_url"] == sidecar["xml_source_url"]
+        assert row["xml_downloaded_at"] == sidecar["xml_downloaded_at"]
+        assert row["pdf_source_url"] == sidecar["pdf_source_url"]
+        assert row["pdf_downloaded_at"] == sidecar["pdf_downloaded_at"]
+
+
 class TestParseArgs:
     def test_requires_input_dir_and_output_jsonl(self):
         with pytest.raises(SystemExit):
@@ -295,6 +324,10 @@ class TestMain:
             "author_names",
             "pub_date",
             "has_pdf",
+            "xml_source_url",
+            "xml_downloaded_at",
+            "pdf_source_url",
+            "pdf_downloaded_at",
         }
 
     def test_author_names_is_list_in_jsonl(self, tmp_path):

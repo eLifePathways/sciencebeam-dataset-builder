@@ -1,8 +1,10 @@
 """CLI for downloading SciELO preprints with JATS XML from EuropePMC."""
 
 import argparse
+import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +69,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Enable debug logging.",
     )
     return parser.parse_args(argv)
+
+
+def _now_utc() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _load_provenance(path: Path) -> dict[str, str]:
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+    return {}
 
 
 def _download_pdf(url: str, dest: Path) -> None:
@@ -139,24 +151,37 @@ def main(argv: list[str] | None = None) -> None:
     # Phase 2: stream batch files and save XML + PDF for each article.
     downloaded = 0
     with tqdm(total=len(target_ids), desc="Downloading", unit=" articles") as pbar:
-        for ppr_id, xml_str in iter_articles_for_ids(batch_files, target_ids):
+        for ppr_id, xml_str, batch_url in iter_articles_for_ids(
+            batch_files, target_ids
+        ):
             if args.limit is not None and downloaded >= args.limit:
                 tqdm.write(f"Reached download limit of {args.limit}.")
                 break
 
             meta = articles_meta[ppr_id]
             title = (meta.get("title") or "")[:70]
+            provenance_path = output_dir / f"PPR_{ppr_id}.provenance.json"
+            provenance = _load_provenance(provenance_path)
 
             if meta["_xml_needed"]:
                 (output_dir / f"PPR_{ppr_id}.xml").write_text(
                     ftfy.fix_text(xml_str), encoding="utf-8"
                 )
+                provenance["xml_source_url"] = batch_url
+                provenance["xml_downloaded_at"] = _now_utc()
 
             if meta["_pdf_needed"] and meta["_pdf_url"]:
                 try:
                     _download_pdf(meta["_pdf_url"], output_dir / f"PPR_{ppr_id}.pdf")
+                    provenance["pdf_source_url"] = meta["_pdf_url"]
+                    provenance["pdf_downloaded_at"] = _now_utc()
                 except requests.RequestException as exc:
                     tqdm.write(f"  PDF download failed for PPR_{ppr_id}: {exc}")
+
+            if provenance:
+                provenance_path.write_text(
+                    json.dumps(provenance, indent=2), encoding="utf-8"
+                )
 
             downloaded += 1
             pbar.update(1)

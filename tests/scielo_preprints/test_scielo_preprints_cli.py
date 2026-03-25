@@ -1,5 +1,6 @@
 """Tests for scielo_preprints_cli module."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,8 +9,10 @@ from sciencebeam_dataset_builder.scielo_preprints.retrieve_cli import main, pars
 
 MODULE = "sciencebeam_dataset_builder.scielo_preprints.retrieve_cli"
 
+BATCH_URL = "https://europepmc.org/ftp/preprint_fulltext/PPR1_PPR999.xml.gz"
 
-def _patch_api(articles=(), count=None, batch_files=(), xml_pairs=()):
+
+def _patch_api(articles=(), count=None, batch_files=(), xml_triples=()):
     """Return a context manager that patches all external I/O in the CLI."""
     if count is None:
         count = len(list(articles))
@@ -17,8 +20,12 @@ def _patch_api(articles=(), count=None, batch_files=(), xml_pairs=()):
         patch(f"{MODULE}.count_scielo_preprints", return_value=count),
         patch(f"{MODULE}.iter_scielo_preprints", return_value=list(articles)),
         patch(f"{MODULE}.get_batch_files", return_value=list(batch_files)),
-        patch(f"{MODULE}.iter_articles_for_ids", return_value=list(xml_pairs)),
+        patch(f"{MODULE}.iter_articles_for_ids", return_value=list(xml_triples)),
     ]
+
+
+def _xml_triple(ppr_id: int, xml: str, batch_url: str = BATCH_URL) -> tuple:
+    return (ppr_id, xml, batch_url)
 
 
 def _article(ppr_id: int, *, has_pdf: bool = False) -> dict:
@@ -92,7 +99,7 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123)],
             batch_files=["batch"],
-            xml_pairs=[(123, xml_content)],
+            xml_triples=[_xml_triple(123, xml_content)],
         )
         with patches[0], patches[1], patches[2], patches[3]:
             main([str(tmp_path)])
@@ -108,12 +115,73 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123)],
             batch_files=["batch"],
-            xml_pairs=[(123, mojibake_xml)],
+            xml_triples=[_xml_triple(123, mojibake_xml)],
         )
         with patches[0], patches[1], patches[2], patches[3]:
             main([str(tmp_path)])
         xml_path = tmp_path / "scielo-preprints" / "PPR_123.xml"
         assert xml_path.read_text(encoding="utf-8") == expected_xml
+
+    def test_writes_provenance_sidecar_for_xml(self, tmp_path):
+        patches = _patch_api(
+            articles=[_article(123)],
+            batch_files=["batch"],
+            xml_triples=[_xml_triple(123, "<article/>", BATCH_URL)],
+        )
+        with patches[0], patches[1], patches[2], patches[3]:
+            main([str(tmp_path)])
+        prov_path = tmp_path / "scielo-preprints" / "PPR_123.provenance.json"
+        assert prov_path.exists()
+        prov = json.loads(prov_path.read_text())
+        assert prov["xml_source_url"] == BATCH_URL
+        assert "xml_downloaded_at" in prov
+
+    def test_writes_provenance_sidecar_for_pdf(self, tmp_path):
+        mock_pdf_response = MagicMock()
+        mock_pdf_response.content = b"%PDF-fake"
+        mock_pdf_response.raise_for_status = MagicMock()
+        patches = _patch_api(
+            articles=[_article(123, has_pdf=True)],
+            batch_files=["batch"],
+            xml_triples=[_xml_triple(123, "<article/>")],
+        )
+        with patches[0], patches[1], patches[2], patches[3]:
+            with patch("requests.get", return_value=mock_pdf_response):
+                main([str(tmp_path)])
+        prov = json.loads(
+            (tmp_path / "scielo-preprints" / "PPR_123.provenance.json").read_text()
+        )
+        assert prov["pdf_source_url"] == "https://example.com/PPR123.pdf"
+        assert "pdf_downloaded_at" in prov
+
+    def test_provenance_preserves_existing_fields_when_only_xml_downloaded(
+        self, tmp_path
+    ):
+        # PDF already exists; only XML is (re-)downloaded. Existing PDF provenance
+        # should be preserved in the sidecar.
+        output_dir = tmp_path / "scielo-preprints"
+        output_dir.mkdir()
+        existing_prov = {
+            "pdf_source_url": "https://example.com/old.pdf",
+            "pdf_downloaded_at": "2024-01-01T00:00:00+00:00",
+        }
+        (output_dir / "PPR_123.provenance.json").write_text(
+            json.dumps(existing_prov), encoding="utf-8"
+        )
+        # PDF already on disk → not re-downloaded
+        (output_dir / "PPR_123.pdf").write_bytes(b"%PDF")
+
+        patches = _patch_api(
+            articles=[_article(123, has_pdf=True)],
+            batch_files=["batch"],
+            xml_triples=[_xml_triple(123, "<article/>")],
+        )
+        with patches[0], patches[1], patches[2], patches[3]:
+            main([str(tmp_path), "--no-skip-existing"])
+
+        prov = json.loads((output_dir / "PPR_123.provenance.json").read_text())
+        assert prov["pdf_source_url"] == "https://example.com/old.pdf"
+        assert prov["xml_source_url"] == BATCH_URL
 
     def test_skips_existing_xml(self, tmp_path):
         output_dir = tmp_path / "scielo-preprints"
@@ -139,7 +207,7 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123)],
             batch_files=["batch"],
-            xml_pairs=[(123, "<article>new</article>")],
+            xml_triples=[_xml_triple(123, "<article>new</article>")],
         )
         with patches[0], patches[1], patches[2] as mock_batch, patches[3]:
             main([str(tmp_path), "--no-skip-existing"])
@@ -149,9 +217,9 @@ class TestMain:
 
     def test_limit_caps_number_of_downloads(self, tmp_path):
         articles = [_article(i) for i in range(1, 4)]
-        xml_pairs = [(i, f"<article>{i}</article>") for i in range(1, 4)]
+        xml_triples = [_xml_triple(i, f"<article>{i}</article>") for i in range(1, 4)]
         patches = _patch_api(
-            articles=articles, batch_files=["batch"], xml_pairs=xml_pairs
+            articles=articles, batch_files=["batch"], xml_triples=xml_triples
         )
         with patches[0], patches[1], patches[2], patches[3]:
             main([str(tmp_path), "--limit", "1"])
@@ -168,7 +236,7 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123, has_pdf=True)],
             batch_files=["batch"],
-            xml_pairs=[(123, xml_content)],
+            xml_triples=[_xml_triple(123, xml_content)],
         )
         with patches[0], patches[1], patches[2], patches[3]:
             with patch("requests.get", return_value=mock_pdf_response):
@@ -185,7 +253,7 @@ class TestMain:
         patches = _patch_api(
             articles=[_article(123, has_pdf=True)],
             batch_files=["batch"],
-            xml_pairs=[(123, xml_content)],
+            xml_triples=[_xml_triple(123, xml_content)],
         )
         with patches[0], patches[1], patches[2], patches[3]:
             with patch(
