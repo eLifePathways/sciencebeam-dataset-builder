@@ -7,10 +7,26 @@ Output layout (follows HF Parquet conventions):
         test-00000-of-00001.parquet
 
 Schema per row:
-    ppr_id    : string   — document identifier (e.g. "PPR_123456")
-    language  : string   — normalised ISO 639-1 language code
-    xml       : string   — JATS XML content
-    pdf       : binary   — PDF bytes
+    ppr_id                     : string        — document identifier (e.g. "PPR123456")
+    doi                        : string
+    version                    : string
+    title                      : string
+    authors                    : list<struct>  — name, orcid, affiliations
+    pub_date                   : string        — ISO 8601 date
+    license                    : string        — URL
+    keywords                   : list<string>
+    subject_heading            : string
+    subject_europepmc_category : string
+    article_type               : string
+    language                   : string        — normalised ISO 639-1 language code
+    language_raw               : string        — language as reported by source
+    xml_source_url             : string
+    xml_downloaded_at          : string        — ISO 8601 datetime
+    xml_ftfy_applied           : bool
+    pdf_source_url             : string
+    pdf_downloaded_at          : string        — ISO 8601 datetime
+    xml                        : string        — JATS XML content
+    pdf                        : binary        — PDF bytes
 """
 
 import argparse
@@ -19,6 +35,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -29,10 +46,34 @@ LOGGER = logging.getLogger(__name__)
 # HuggingFace uses "validation", the split CSV uses "val".
 SPLIT_NAME_MAP = {"train": "train", "val": "validation", "test": "test"}
 
+AUTHOR_TYPE = pa.struct(
+    [
+        pa.field("name", pa.string()),
+        pa.field("orcid", pa.string()),
+        pa.field("affiliations", pa.list_(pa.string())),
+    ]
+)
+
 SCHEMA = pa.schema(
     [
         pa.field("ppr_id", pa.string()),
+        pa.field("doi", pa.string()),
+        pa.field("version", pa.string()),
+        pa.field("title", pa.string()),
+        pa.field("authors", pa.list_(AUTHOR_TYPE)),
+        pa.field("pub_date", pa.string()),
+        pa.field("license", pa.string()),
+        pa.field("keywords", pa.list_(pa.string())),
+        pa.field("subject_heading", pa.string()),
+        pa.field("subject_europepmc_category", pa.string()),
+        pa.field("article_type", pa.string()),
         pa.field("language", pa.string()),
+        pa.field("language_raw", pa.string()),
+        pa.field("xml_source_url", pa.string()),
+        pa.field("xml_downloaded_at", pa.string()),
+        pa.field("xml_ftfy_applied", pa.bool_()),
+        pa.field("pdf_source_url", pa.string()),
+        pa.field("pdf_downloaded_at", pa.string()),
         pa.field("xml", pa.string()),
         pa.field("pdf", pa.binary()),
     ]
@@ -49,13 +90,33 @@ def _read_csv(path: Path) -> list[dict[str, object]]:
         return list(csv.DictReader(f))
 
 
+def _str(value: object) -> str:
+    return str(value) if value is not None else ""
+
+
 def _build_split_batches(
     documents_dir: Path,
     split_rows: list[dict[str, object]],
     metadata_by_id: dict[str, dict[str, object]],
 ) -> pa.Table:
     ppr_ids: list[str] = []
+    dois: list[str] = []
+    versions: list[str] = []
+    titles: list[str] = []
+    authors_list: list[list[dict[str, object]]] = []
+    pub_dates: list[str] = []
+    licenses: list[str] = []
+    keywords_list: list[list[str]] = []
+    subject_headings: list[str] = []
+    subject_europepmc_categories: list[str] = []
+    article_types: list[str] = []
     languages: list[str] = []
+    languages_raw: list[str] = []
+    xml_source_urls: list[str] = []
+    xml_downloaded_ats: list[str] = []
+    xml_ftfy_applied_list: list[bool] = []
+    pdf_source_urls: list[str] = []
+    pdf_downloaded_ats: list[str] = []
     xmls: list[str] = []
     pdfs: list[bytes] = []
 
@@ -69,13 +130,67 @@ def _build_split_batches(
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
+        meta = metadata_by_id.get(ppr_id, {})
+        raw_authors = cast(list[dict[str, object]], meta.get("authors") or [])
+        authors: list[dict[str, object]] = [
+            {
+                "name": _str(a.get("name")),
+                "orcid": _str(a.get("orcid")),
+                "affiliations": [
+                    _str(af) for af in cast(list[object], a.get("affiliations") or [])
+                ],
+            }
+            for a in raw_authors
+        ]
+
         ppr_ids.append(ppr_id)
-        languages.append(str(metadata_by_id.get(ppr_id, {}).get("language", "")))
+        dois.append(_str(meta.get("doi")))
+        versions.append(_str(meta.get("version")))
+        titles.append(_str(meta.get("title")))
+        authors_list.append(authors)
+        pub_dates.append(_str(meta.get("pub_date")))
+        licenses.append(_str(meta.get("license")))
+        keywords_list.append(
+            [_str(k) for k in cast(list[object], meta.get("keywords") or [])]
+        )
+        subject_headings.append(_str(meta.get("subject_heading")))
+        subject_europepmc_categories.append(
+            _str(meta.get("subject_europepmc_category"))
+        )
+        article_types.append(_str(meta.get("article_type")))
+        languages.append(_str(meta.get("language")))
+        languages_raw.append(_str(meta.get("language_raw")))
+        xml_source_urls.append(_str(meta.get("xml_source_url")))
+        xml_downloaded_ats.append(_str(meta.get("xml_downloaded_at")))
+        xml_ftfy_applied_list.append(bool(meta.get("xml_ftfy_applied")))
+        pdf_source_urls.append(_str(meta.get("pdf_source_url")))
+        pdf_downloaded_ats.append(_str(meta.get("pdf_downloaded_at")))
         xmls.append(xml_path.read_text(encoding="utf-8"))
         pdfs.append(pdf_path.read_bytes())
 
     return pa.table(
-        {"ppr_id": ppr_ids, "language": languages, "xml": xmls, "pdf": pdfs},
+        {
+            "ppr_id": ppr_ids,
+            "doi": dois,
+            "version": versions,
+            "title": titles,
+            "authors": pa.array(authors_list, type=pa.list_(AUTHOR_TYPE)),
+            "pub_date": pub_dates,
+            "license": licenses,
+            "keywords": keywords_list,
+            "subject_heading": subject_headings,
+            "subject_europepmc_category": subject_europepmc_categories,
+            "article_type": article_types,
+            "language": languages,
+            "language_raw": languages_raw,
+            "xml_source_url": xml_source_urls,
+            "xml_downloaded_at": xml_downloaded_ats,
+            "xml_ftfy_applied": xml_ftfy_applied_list,
+            "pdf_source_url": pdf_source_urls,
+            "pdf_downloaded_at": pdf_downloaded_ats,
+            "xml": xmls,
+            "pdf": pdfs,
+        },
         schema=SCHEMA,
     )
 
