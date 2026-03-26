@@ -14,6 +14,7 @@ Schema per row:
 """
 
 import argparse
+import csv
 import json
 import logging
 import sys
@@ -41,6 +42,11 @@ SCHEMA = pa.schema(
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
     with path.open(encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
+
+
+def _read_csv(path: Path) -> list[dict[str, object]]:
+    with path.open(encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
 
 
 def _build_split_batches(
@@ -111,7 +117,7 @@ def main(argv: list[str] | None = None) -> None:
         stream=sys.stderr,
     )
 
-    split_rows = _read_jsonl(args.split_csv)
+    split_rows = _read_csv(args.split_csv)
     metadata_by_id = {str(r["ppr_id"]): r for r in _read_jsonl(args.metadata_jsonl)}
 
     by_split: dict[str, list[dict[str, object]]] = {}
