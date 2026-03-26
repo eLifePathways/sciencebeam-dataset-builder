@@ -74,8 +74,8 @@ SCHEMA = pa.schema(
         pa.field("xml_ftfy_applied", pa.bool_()),
         pa.field("pdf_source_url", pa.string()),
         pa.field("pdf_downloaded_at", pa.string()),
-        pa.field("xml", pa.string()),
-        pa.field("pdf", pa.binary()),
+        pa.field("xml", pa.string(), nullable=False),
+        pa.field("pdf", pa.binary(), nullable=False),
     ]
 )
 
