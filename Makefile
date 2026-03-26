@@ -37,17 +37,17 @@ scielo-preprints-metadata:
 	uv run -m sciencebeam_dataset_builder.scielo_preprints.metadata_cli \
 		$(OUTPUT_DIR)/scielo-preprints $(OUTPUT_DIR)/scielo-preprints-metadata.jsonl
 
+scielo-preprints-split:
+	uv run -m sciencebeam_dataset_builder.scielo_preprints.split_cli \
+		$(OUTPUT_DIR)/scielo-preprints-metadata.jsonl \
+		$(OUTPUT_DIR)/scielo-preprints-split.csv $(SPLIT_ARGS)
+
 scielo-preprints-hf-dataset:
 	uv run -m sciencebeam_dataset_builder.scielo_preprints.hf_dataset_cli \
 		$(OUTPUT_DIR)/scielo-preprints \
 		$(OUTPUT_DIR)/scielo-preprints-split.csv \
 		$(OUTPUT_DIR)/scielo-preprints-metadata.jsonl \
 		$(OUTPUT_DIR)/scielo-preprints-hf-dataset $(RUN_ARGS)
-
-scielo-preprints-split:
-	uv run -m sciencebeam_dataset_builder.scielo_preprints.split_cli \
-		$(OUTPUT_DIR)/scielo-preprints-metadata.jsonl \
-		$(OUTPUT_DIR)/scielo-preprints-split.csv $(SPLIT_ARGS)
 
 scielo-preprints-upload-to-hf:
 	uv run hf upload elifepathways/sciencebeam-v2-benchmarking \
