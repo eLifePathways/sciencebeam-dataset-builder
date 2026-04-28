@@ -1,6 +1,8 @@
+INPUT_DIR ?= ./sciencebeam_dataset_builder/split_parquet_files/input_files
 OUTPUT_DIR ?= ./output
+SPLIT_OUTPUT_DIR ?= ./sciencebeam_dataset_builder/split_parquet_files/output_files
 
-.PHONY: install lint format run test build clean typecheck metadata split explore-scielo-preprints-jats
+.PHONY: install lint format run test build clean typecheck metadata split explore-scielo-preprints-jats split-parquet
 
 install:
 	uv sync --frozen
@@ -48,6 +50,11 @@ scielo-preprints-hf-dataset:
 		$(OUTPUT_DIR)/scielo-preprints-split.csv \
 		$(OUTPUT_DIR)/scielo-preprints-metadata.jsonl \
 		$(OUTPUT_DIR)/scielo-preprints-hf-dataset $(RUN_ARGS)
+
+split-parquet:
+	uv run python sciencebeam_dataset_builder/split_parquet_files/split_parquet.py \
+		--input-dir $(INPUT_DIR) \
+		--output-dir $(SPLIT_OUTPUT_DIR)
 
 scielo-preprints-upload-to-hf:
 	uv run hf upload elifepathways/sciencebeam-v2-benchmarking \
