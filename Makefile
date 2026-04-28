@@ -61,3 +61,10 @@ scielo-preprints-upload-to-hf:
 		$(OUTPUT_DIR)/scielo-preprints-hf-dataset \
 		scielo-preprints-jats \
 		--type dataset
+
+
+biorxiv-jats-upload-to-hf:
+	uv run hf upload elifepathways/sciencebeam-v2-benchmarking \
+		$(OUTPUT_DIR)/biorxiv-jats-hf-dataset \
+		biorxiv-jats \
+		--type dataset
