@@ -1,7 +1,7 @@
 import argparse
 import os
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split  # type: ignore[import-untyped]
 
 
 def split_parquet_files(input_dir: str, output_dir: str) -> None:
