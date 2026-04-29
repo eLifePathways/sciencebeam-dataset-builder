@@ -1,7 +1,7 @@
 import argparse
 import os
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split  # type: ignore[import-untyped]
 
 
 def split_parquet_files(input_dir: str, output_dir: str) -> None:
@@ -34,9 +34,15 @@ def split_parquet_files(input_dir: str, output_dir: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Split parquet files into train/validation/test sets")
-    parser.add_argument("--input-dir", required=True, help="Directory containing input parquet files")
-    parser.add_argument("--output-dir", required=True, help="Directory to write split parquet files")
+    parser = argparse.ArgumentParser(
+        description="Split parquet files into train/validation/test sets"
+    )
+    parser.add_argument(
+        "--input-dir", required=True, help="Directory containing input parquet files"
+    )
+    parser.add_argument(
+        "--output-dir", required=True, help="Directory to write split parquet files"
+    )
     args = parser.parse_args()
 
     split_parquet_files(args.input_dir, args.output_dir)
