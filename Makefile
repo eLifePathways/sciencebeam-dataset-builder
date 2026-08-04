@@ -1,8 +1,9 @@
 INPUT_DIR ?= ./sciencebeam_dataset_builder/split_parquet_files/input_files
 OUTPUT_DIR ?= ./output
 SPLIT_OUTPUT_DIR ?= ./sciencebeam_dataset_builder/split_parquet_files/output_files
+BENCHMARK_OUTPUT_DIR ?= $(OUTPUT_DIR)/benchmark
 
-.PHONY: install lint format run test build clean typecheck metadata split explore-scielo-preprints-jats split-parquet
+.PHONY: install lint format run test build clean typecheck metadata split explore-scielo-preprints-jats split-parquet benchmark-cut
 
 install:
 	uv sync --frozen
@@ -50,6 +51,12 @@ scielo-preprints-hf-dataset:
 		$(OUTPUT_DIR)/scielo-preprints-split.csv \
 		$(OUTPUT_DIR)/scielo-preprints-metadata.jsonl \
 		$(OUTPUT_DIR)/scielo-preprints-hf-dataset $(RUN_ARGS)
+
+# Everything corpus-specific arrives via CONFIG, so no repo id, stratum value or
+# count belongs in this file. Pass extra flags through RUN_ARGS, e.g. --plan-only.
+benchmark-cut:
+	uv run -m sciencebeam_dataset_builder.benchmark.cut_cli \
+		$(CONFIG) $(BENCHMARK_OUTPUT_DIR) $(RUN_ARGS)
 
 split-parquet:
 	uv run python sciencebeam_dataset_builder/split_parquet_files/split_parquet.py \
