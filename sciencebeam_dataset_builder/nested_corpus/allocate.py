@@ -16,8 +16,8 @@ import dataclasses
 import logging
 from collections.abc import Iterable, Sequence
 
-from sciencebeam_dataset_builder.benchmark.config import BenchmarkConfig
-from sciencebeam_dataset_builder.benchmark.manifest import (
+from sciencebeam_dataset_builder.nested_corpus.config import CorpusConfig
+from sciencebeam_dataset_builder.nested_corpus.manifest import (
     ManifestRow,
     ids_by_stratum_split,
 )
@@ -81,10 +81,10 @@ class Allocation:
 
 def allocate(
     metadata: Sequence[MetadataRow],
-    config: BenchmarkConfig,
+    config: CorpusConfig,
     previous: Sequence[ManifestRow] = (),
 ) -> Allocation:
-    """Assign documents to splits for one benchmark version.
+    """Assign documents to splits for one corpus version.
 
     `previous` is the published manifest of the version being extended, empty for a
     first cut. Raises rather than returning a result that would break nesting.
@@ -166,13 +166,13 @@ def _check_previous_against_archive(
     previous: Sequence[ManifestRow],
     by_id: dict[str, MetadataRow],
     excluded: set[str],
-    config: BenchmarkConfig,
+    config: CorpusConfig,
 ) -> None:
     """Confirm the archive is still the one the published version was cut from.
 
     The archive is write-once, so all of these should be impossible — which is why they
     are worth checking: cutting a new version from a changed corpus would produce a
-    benchmark that claims to extend one it does not.
+    corpus that claims to extend one it does not.
     """
     for published in previous:
         archived = by_id.get(published.id)
@@ -204,7 +204,7 @@ def _check_previous_against_archive(
 
 
 def _check_configured_strata_exist(
-    config: BenchmarkConfig, metadata: Sequence[MetadataRow]
+    config: CorpusConfig, metadata: Sequence[MetadataRow]
 ) -> None:
     """A per-stratum override for a stratum the archive lacks is a typo."""
     strata = {row.stratum for row in metadata}
@@ -220,7 +220,7 @@ def _allocate_stratum(
     stratum: str,
     eligible: Sequence[MetadataRow],
     published: Sequence[ManifestRow],
-    config: BenchmarkConfig,
+    config: CorpusConfig,
 ) -> tuple[list[ManifestRow], list[Shortfall], set[str]]:
     by_rank = sorted(eligible, key=lambda row: row.rank)
     published_by_split: dict[str, list[ManifestRow]] = {}

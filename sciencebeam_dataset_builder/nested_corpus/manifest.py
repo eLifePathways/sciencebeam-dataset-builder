@@ -2,7 +2,7 @@
 
 It is provenance and re-derivation rather than the retrieval path — retrieval is by
 split file. It is also what the next version's membership is checked against, since a
-published benchmark is not re-derivable from its config alone.
+published corpus is not re-derivable from its config alone.
 """
 
 import csv

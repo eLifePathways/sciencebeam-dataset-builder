@@ -1,7 +1,7 @@
-"""Benchmark configuration — the data that travels with a published benchmark.
+"""Corpus configuration — the data that travels with a published corpus.
 
-A config is read from the previous version beside the benchmark it produced, and the
-new version's config is written back the same way, so the benchmark repo is the record
+A config is read from the previous version beside the corpus it produced, and the
+new version's config is written back the same way, so the corpus repo is the record
 of how every version was made. Nothing here is corpus-specific: the stratum column,
 the split names and the counts all arrive as data.
 """
@@ -27,7 +27,7 @@ class SourceConfig:
     # Absent when cutting from a local shard directory given on the command line.
     repo_id: str | None = None
     # Recorded by a run rather than hand-written: which archive revision it read, so a
-    # later version can tell it is extending a benchmark cut from the same corpus.
+    # later version can tell it is extending a version cut from the same archive.
     revision: str | None = None
 
 
@@ -48,9 +48,13 @@ class AllocationConfig:
 
 
 @dataclasses.dataclass(frozen=True)
-class BenchmarkConfig:
-    """A complete description of one benchmark version."""
+class CorpusConfig:
+    """A complete description of one corpus version."""
 
+    # What this corpus is called. It names the published manifest and config, so a repo
+    # can hold more than one corpus without their versions colliding, and a reader can
+    # tell which corpus a version file belongs to.
+    name: str
     version: int
     # Both the set of splits and the order they are served in when a stratum cannot
     # fill them all. First served wins a scarce stratum, so this order is a real
@@ -88,6 +92,7 @@ class CountRegression:
 
 
 _TOP_LEVEL_KEYS = {
+    "name",
     "version",
     "splits",
     "allocation",
@@ -145,13 +150,22 @@ def _parse_splits(value: Any) -> tuple[str, ...]:
     return splits
 
 
-def config_from_dict(data: Mapping[str, Any]) -> BenchmarkConfig:
+def config_from_dict(data: Mapping[str, Any]) -> CorpusConfig:
     """Build a config from parsed YAML, rejecting anything unusable.
 
     Unknown keys are an error rather than being ignored: this file is the record of how
-    a published benchmark was made, and a silently ignored typo there is a wrong record.
+    a published corpus was made, and a silently ignored typo there is a wrong record.
     """
     _reject_unknown_keys(data, _TOP_LEVEL_KEYS, "config")
+
+    name = str(data.get("name", "")).strip()
+    if not name:
+        raise ConfigError(
+            "name is required: it names the published manifest and config, so a repo "
+            "can hold more than one corpus"
+        )
+    if "/" in name or name.startswith("."):
+        raise ConfigError(f"name {name!r} must be usable as a filename component")
 
     version = data.get("version", 1)
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
@@ -194,7 +208,7 @@ def config_from_dict(data: Mapping[str, Any]) -> BenchmarkConfig:
     if id_column not in columns:
         raise ConfigError(
             f"columns must include the id column {id_column!r}, so the published "
-            f"benchmark can be read by id"
+            f"corpus can be read by id"
         )
 
     exclude_data = data.get("exclude", []) or []
@@ -208,7 +222,8 @@ def config_from_dict(data: Mapping[str, Any]) -> BenchmarkConfig:
     target_data = _require_mapping(data.get("target", {}), "target")
     _reject_unknown_keys(target_data, {"repo_id"}, "target")
 
-    return BenchmarkConfig(
+    return CorpusConfig(
+        name=name,
         version=version,
         splits=splits,
         allocation=AllocationConfig(default=default, overrides=overrides),
@@ -231,7 +246,7 @@ def _optional_str(value: Any) -> str | None:
     return None if value is None else str(value)
 
 
-def config_to_dict(config: BenchmarkConfig) -> dict[str, Any]:
+def config_to_dict(config: CorpusConfig) -> dict[str, Any]:
     """Return a plain-data form of the config, suitable for YAML."""
     source: dict[str, Any] = {
         "metadata_file": config.source.metadata_file,
@@ -243,6 +258,7 @@ def config_to_dict(config: BenchmarkConfig) -> dict[str, Any]:
         source["revision"] = config.source.revision
 
     data: dict[str, Any] = {
+        "name": config.name,
         "version": config.version,
         "splits": list(config.splits),
         "id_column": config.id_column,
@@ -265,14 +281,14 @@ def config_to_dict(config: BenchmarkConfig) -> dict[str, Any]:
     return data
 
 
-def load_config(path: Path) -> BenchmarkConfig:
+def load_config(path: Path) -> CorpusConfig:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if data is None:
         raise ConfigError(f"{path} is empty")
     return config_from_dict(_require_mapping(data, "config"))
 
 
-def dump_config(config: BenchmarkConfig, path: Path) -> None:
+def dump_config(config: CorpusConfig, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.safe_dump(config_to_dict(config), sort_keys=False), encoding="utf-8"
@@ -280,7 +296,7 @@ def dump_config(config: BenchmarkConfig, path: Path) -> None:
 
 
 def find_lowered_counts(
-    previous: BenchmarkConfig, current: BenchmarkConfig
+    previous: CorpusConfig, current: CorpusConfig
 ) -> list[CountRegression]:
     """Return every per-stratum-split count the current config asks less of.
 

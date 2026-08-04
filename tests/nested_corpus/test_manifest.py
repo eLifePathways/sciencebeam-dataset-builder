@@ -1,8 +1,8 @@
-"""Tests for benchmark.manifest — the published record of which document is where."""
+"""Tests for corpus.manifest — the published record of which document is where."""
 
 import pytest
 
-from sciencebeam_dataset_builder.benchmark.manifest import (
+from sciencebeam_dataset_builder.nested_corpus.manifest import (
     MANIFEST_FIELDS,
     ManifestError,
     ManifestRow,
@@ -20,12 +20,12 @@ ROWS = [
 
 class TestRoundTrip:
     def test_write_then_read_preserves_the_rows(self, tmp_path):
-        path = tmp_path / "benchmark-v001.csv"
+        path = tmp_path / "sample-v001.csv"
         write_manifest(path, ROWS)
         assert set(read_manifest(path)) == set(ROWS)
 
     def test_rows_are_written_in_stratum_then_rank_order(self, tmp_path):
-        path = tmp_path / "benchmark-v001.csv"
+        path = tmp_path / "sample-v001.csv"
         write_manifest(path, ROWS)
         assert [row.id for row in read_manifest(path)] == [
             "alpha-000",
@@ -34,13 +34,13 @@ class TestRoundTrip:
         ]
 
     def test_the_header_is_the_documented_field_list(self, tmp_path):
-        path = tmp_path / "benchmark-v001.csv"
+        path = tmp_path / "sample-v001.csv"
         write_manifest(path, ROWS)
         header = path.read_text(encoding="utf-8").splitlines()[0]
         assert header == ",".join(MANIFEST_FIELDS)
 
     def test_the_parent_directory_is_created(self, tmp_path):
-        path = tmp_path / "splits" / "benchmark-v001.csv"
+        path = tmp_path / "splits" / "sample-v001.csv"
         write_manifest(path, ROWS)
         assert path.exists()
 

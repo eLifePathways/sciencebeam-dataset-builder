@@ -1,4 +1,4 @@
-"""Synthetic fixtures for the benchmark tests.
+"""Synthetic fixtures for the corpus tests.
 
 Strata are named alpha/beta/gamma and ids are generated, so nothing here reveals or
 depends on the private corpus this tool is first used on.
@@ -11,13 +11,13 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from sciencebeam_dataset_builder.benchmark.allocate import MetadataRow
-from sciencebeam_dataset_builder.benchmark.config import (
-    BenchmarkConfig,
+from sciencebeam_dataset_builder.nested_corpus.allocate import MetadataRow
+from sciencebeam_dataset_builder.nested_corpus.config import (
+    CorpusConfig,
     config_from_dict,
     config_to_dict,
 )
-from sciencebeam_dataset_builder.benchmark.manifest import ManifestRow
+from sciencebeam_dataset_builder.nested_corpus.manifest import ManifestRow
 
 
 def paper_id(stratum: str, rank: int) -> str:
@@ -36,12 +36,14 @@ def metadata(**sizes: int) -> list[MetadataRow]:
 def config(
     *,
     splits: list[str],
+    name: str = "sample",
     default: dict[str, int],
     overrides: dict[str, dict[str, int]] | None = None,
     exclude: list[str] | None = None,
     version: int = 1,
-) -> BenchmarkConfig:
+) -> CorpusConfig:
     data: dict[str, Any] = {
+        "name": name,
         "version": version,
         "splits": splits,
         "columns": ["id", "stratum", "xml"],
@@ -158,7 +160,7 @@ def _write_shard(
             )
 
 
-def write_config(path: Path, cfg: BenchmarkConfig) -> Path:
+def write_config(path: Path, cfg: CorpusConfig) -> Path:
     """Write a config as YAML, for tests that drive the CLI."""
     import yaml
 
@@ -171,13 +173,15 @@ def write_config(path: Path, cfg: BenchmarkConfig) -> Path:
 def archive_config(
     *,
     splits: list[str],
+    name: str = "sample",
     default: dict[str, int],
     overrides: dict[str, dict[str, int]] | None = None,
     exclude: list[str] | None = None,
     version: int = 1,
-) -> BenchmarkConfig:
+) -> CorpusConfig:
     """A config matching the synthetic archive written by `write_archive`."""
     cfg = config(
+        name=name,
         splits=splits,
         default=default,
         overrides=overrides,

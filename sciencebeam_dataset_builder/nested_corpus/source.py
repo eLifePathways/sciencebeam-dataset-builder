@@ -1,6 +1,6 @@
 """Reading an archive selectively, from a local directory or a dataset repo.
 
-Producing a benchmark must not download shards it does not need. Two properties of the
+Producing a corpus must not download shards it does not need. Two properties of the
 archive make that possible, and neither is this module's to create:
 
 - the shard manifest maps each shard to its stratum and the range of ranks it holds, so
@@ -24,8 +24,8 @@ from typing import Any, Protocol
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from sciencebeam_dataset_builder.benchmark.allocate import MetadataRow
-from sciencebeam_dataset_builder.benchmark.config import BenchmarkConfig
+from sciencebeam_dataset_builder.nested_corpus.allocate import MetadataRow
+from sciencebeam_dataset_builder.nested_corpus.config import CorpusConfig
 
 LOGGER = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ class ArchiveSource(Protocol):
 class LocalArchiveSource:
     """An archive as a directory of shards, as it exists just after being built.
 
-    Cutting a first benchmark immediately after a local build must not require
+    Cutting a first corpus immediately after a local build must not require
     uploading and re-downloading the shards.
     """
 
@@ -144,7 +144,7 @@ class HfArchiveSource:
         )
 
 
-def parse_metadata(text: str, config: BenchmarkConfig) -> list[MetadataRow]:
+def parse_metadata(text: str, config: CorpusConfig) -> list[MetadataRow]:
     """Parse the archive's metadata, keeping only id, stratum and rank.
 
     Every other field the archive records (sizes, source format) belongs to whoever
@@ -167,7 +167,7 @@ def parse_metadata(text: str, config: BenchmarkConfig) -> list[MetadataRow]:
     return rows
 
 
-def parse_shard_manifest(text: str, config: BenchmarkConfig) -> list[ShardInfo]:
+def parse_shard_manifest(text: str, config: CorpusConfig) -> list[ShardInfo]:
     shards: list[ShardInfo] = []
     for line_number, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
@@ -252,7 +252,7 @@ def _shard_holding(row: MetadataRow, candidates: Sequence[ShardInfo]) -> ShardIn
     )
 
 
-def resolve_columns(config: BenchmarkConfig, available: set[str]) -> list[str]:
+def resolve_columns(config: CorpusConfig, available: set[str]) -> list[str]:
     """The configured output columns the archive actually holds.
 
     The rest — a rendered PDF, the converter version that made it — are added by later
@@ -272,7 +272,7 @@ def resolve_columns(config: BenchmarkConfig, available: set[str]) -> list[str]:
 def iter_document_batches(
     source: ArchiveSource,
     selected: Mapping[str, Sequence[MetadataRow]],
-    config: BenchmarkConfig,
+    config: CorpusConfig,
 ) -> Iterator[pa.Table]:
     """Yield one table per shard, holding only the wanted rows of that shard.
 
@@ -289,7 +289,7 @@ def _read_shard_rows(
     source: ArchiveSource,
     filename: str,
     wanted: Sequence[MetadataRow],
-    config: BenchmarkConfig,
+    config: CorpusConfig,
 ) -> pa.Table:
     parquet_file = source.open_parquet(filename)
     id_column = config.id_column

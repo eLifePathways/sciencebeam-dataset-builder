@@ -1,8 +1,8 @@
-"""Tests for benchmark.config — validation, round-tripping and the cheap count check."""
+"""Tests for corpus.config — validation, round-tripping and the cheap count check."""
 
 import pytest
 
-from sciencebeam_dataset_builder.benchmark.config import (
+from sciencebeam_dataset_builder.nested_corpus.config import (
     ConfigError,
     config_from_dict,
     config_to_dict,
@@ -11,7 +11,7 @@ from sciencebeam_dataset_builder.benchmark.config import (
     load_config,
 )
 
-from tests.benchmark._helpers import config
+from tests.nested_corpus._helpers import config
 
 SPLITS = ["test", "validation"]
 
@@ -21,6 +21,7 @@ class TestValidation:
         with pytest.raises(ConfigError) as exc_info:
             config_from_dict(
                 {
+                    "name": "sample",
                     "splits": SPLITS,
                     "columns": ["id"],
                     "source": {
@@ -32,6 +33,25 @@ class TestValidation:
                 }
             )
         assert "startum_column" in str(exc_info.value)
+
+    def test_a_missing_name_is_rejected(self):
+        with pytest.raises(ConfigError) as exc_info:
+            config_from_dict(
+                {
+                    "splits": SPLITS,
+                    "columns": ["id"],
+                    "source": {
+                        "metadata_file": "m.jsonl",
+                        "shard_manifest_file": "s.jsonl",
+                    },
+                    "allocation": {"default": {"test": 1, "validation": 0}},
+                }
+            )
+        assert "name is required" in str(exc_info.value)
+
+    def test_a_name_that_is_not_a_filename_component_is_rejected(self):
+        with pytest.raises(ConfigError):
+            config(splits=SPLITS, default={"test": 1, "validation": 0}, name="a/b")
 
     def test_default_must_cover_every_split(self):
         with pytest.raises(ConfigError) as exc_info:
@@ -59,6 +79,7 @@ class TestValidation:
         with pytest.raises(ConfigError):
             config_from_dict(
                 {
+                    "name": "sample",
                     "splits": SPLITS,
                     "columns": ["id"],
                     "source": {
@@ -81,6 +102,7 @@ class TestValidation:
         with pytest.raises(ConfigError) as exc_info:
             config_from_dict(
                 {
+                    "name": "sample",
                     "splits": SPLITS,
                     "columns": ["stratum", "xml"],
                     "source": {
@@ -96,6 +118,7 @@ class TestValidation:
         with pytest.raises(ConfigError):
             config_from_dict(
                 {
+                    "name": "sample",
                     "splits": SPLITS,
                     "columns": ["id"],
                     "source": {"metadata_file": "m.jsonl"},
@@ -135,7 +158,7 @@ class TestRoundTrip:
             exclude=["alpha-004"],
             version=3,
         )
-        path = tmp_path / "benchmark-v003.yml"
+        path = tmp_path / "sample-v003.yml"
         dump_config(cfg, path)
         assert load_config(path) == cfg
 
@@ -147,6 +170,14 @@ class TestRoundTrip:
         path = tmp_path / "config.yml"
         dump_config(config_from_dict(data), path)
         assert load_config(path).source.revision == "0123456789abcdef"
+
+    def test_the_name_survives_a_round_trip(self, tmp_path):
+        cfg = config(
+            splits=SPLITS, default={"test": 1, "validation": 0}, name="other-corpus"
+        )
+        path = tmp_path / "config.yml"
+        dump_config(cfg, path)
+        assert load_config(path).name == "other-corpus"
 
     def test_an_empty_file_is_rejected(self, tmp_path):
         path = tmp_path / "config.yml"

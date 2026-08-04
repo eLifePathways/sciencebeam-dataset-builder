@@ -1,14 +1,18 @@
-"""Tests for benchmark.cut_cli — cutting a version end to end from a local archive."""
+"""Tests for corpus.cut_cli — cutting a version end to end from a local archive."""
 
 import csv
 
 import pyarrow.parquet as pq
 import pytest
 
-from sciencebeam_dataset_builder.benchmark.config import load_config
-from sciencebeam_dataset_builder.benchmark.cut_cli import main, parse_args, version_name
+from sciencebeam_dataset_builder.nested_corpus.config import load_config
+from sciencebeam_dataset_builder.nested_corpus.cut_cli import (
+    main,
+    parse_args,
+    version_name,
+)
 
-from tests.benchmark._helpers import (
+from tests.nested_corpus._helpers import (
     archive_config,
     document_bytes,
     paper_id,
@@ -27,16 +31,24 @@ def _cut(tmp_path, archive_dir, cfg, *extra, output_name="v1"):
 
 
 def _manifest_rows(output_dir, version=1):
-    path = output_dir / f"{version_name(version)}.csv"
+    path = output_dir / f"sample-v{version:03d}.csv"
     with path.open(encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f))
 
 
 class TestVersionName:
-    def test_is_zero_padded_to_three_digits(self):
-        assert version_name(1) == "benchmark-v001"
-        assert version_name(12) == "benchmark-v012"
-        assert version_name(120) == "benchmark-v120"
+    def test_names_the_corpus_and_zero_pads_the_version(self):
+        counts = {"test": 1, "validation": 0}
+        named = archive_config(splits=SPLITS, default=counts, name="other-corpus")
+        assert version_name(named) == "other-corpus-v001"
+        assert (
+            version_name(archive_config(splits=SPLITS, default=counts, version=12))
+            == "sample-v012"
+        )
+        assert (
+            version_name(archive_config(splits=SPLITS, default=counts, version=120))
+            == "sample-v120"
+        )
 
 
 class TestParseArgs:
@@ -65,8 +77,8 @@ class TestFirstCut:
         cfg = archive_config(splits=SPLITS, default={"test": 2, "validation": 1})
         output_dir = _cut(tmp_path, archive, cfg)
 
-        assert (output_dir / "benchmark-v001.csv").exists()
-        assert (output_dir / "benchmark-v001.yml").exists()
+        assert (output_dir / "sample-v001.csv").exists()
+        assert (output_dir / "sample-v001.yml").exists()
         assert (output_dir / "added" / "test.parquet").exists()
         assert (output_dir / "added" / "validation.parquet").exists()
 
@@ -106,7 +118,7 @@ class TestFirstCut:
         write_archive(archive, {"alpha": 4})
         cfg = archive_config(splits=SPLITS, default={"test": 1, "validation": 0})
         output_dir = _cut(tmp_path, archive, cfg)
-        assert load_config(output_dir / "benchmark-v001.yml").source.revision is None
+        assert load_config(output_dir / "sample-v001.yml").source.revision is None
 
 
 class TestExtending:
@@ -125,7 +137,7 @@ class TestExtending:
                 splits=SPLITS, default={"test": 4, "validation": 1}, version=2
             ),
             "--previous-manifest",
-            str(first / "benchmark-v001.csv"),
+            str(first / "sample-v001.csv"),
             output_name="v2",
         )
         added = pq.read_table(second / "added" / "test.parquet")
@@ -151,7 +163,7 @@ class TestExtending:
                 splits=SPLITS, default={"test": 4, "validation": 1}, version=2
             ),
             "--previous-manifest",
-            str(first / "benchmark-v001.csv"),
+            str(first / "sample-v001.csv"),
             output_name="v2",
         )
         published = {(r["id"], r["split"]) for r in _manifest_rows(first)}
@@ -168,7 +180,7 @@ class TestExtending:
             archive,
             cfg,
             "--previous-manifest",
-            str(first / "benchmark-v001.csv"),
+            str(first / "sample-v001.csv"),
             output_name="again",
         )
         assert not (again / "added").exists()
@@ -225,9 +237,9 @@ class TestFailures:
                     "--source-dir",
                     str(archive),
                     "--previous-manifest",
-                    str(first / "benchmark-v001.csv"),
+                    str(first / "sample-v001.csv"),
                     "--previous-config",
-                    str(first / "benchmark-v001.yml"),
+                    str(first / "sample-v001.yml"),
                 ]
             )
         assert exc_info.value.code == 1
@@ -256,7 +268,7 @@ class TestFailures:
                     "--source-dir",
                     str(archive),
                     "--previous-config",
-                    str(first / "benchmark-v001.yml"),
+                    str(first / "sample-v001.yml"),
                 ]
             )
         assert "'test'" in capsys.readouterr().err

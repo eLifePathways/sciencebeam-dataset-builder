@@ -1,12 +1,12 @@
-"""Tests for benchmark.source — selective reading, and detecting an archive that moved."""
+"""Tests for corpus.source — selective reading, and detecting an archive that moved."""
 
 import json
 
 import pyarrow.parquet as pq
 import pytest
 
-from sciencebeam_dataset_builder.benchmark.allocate import MetadataRow
-from sciencebeam_dataset_builder.benchmark.source import (
+from sciencebeam_dataset_builder.nested_corpus.allocate import MetadataRow
+from sciencebeam_dataset_builder.nested_corpus.source import (
     LocalArchiveSource,
     ShardInfo,
     SourceError,
@@ -19,7 +19,7 @@ from sciencebeam_dataset_builder.benchmark.source import (
     shards_for,
 )
 
-from tests.benchmark._helpers import (
+from tests.nested_corpus._helpers import (
     archive_config,
     document_bytes,
     document_xml,

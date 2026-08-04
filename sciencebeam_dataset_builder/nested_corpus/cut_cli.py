@@ -1,4 +1,4 @@
-"""Cut a benchmark version from an archive: the documents, the manifest and the config.
+"""Cut a corpus version from an archive: the documents, the manifest and the config.
 
 Writes only the documents this version *adds*, alongside the full manifest and the
 config that produced it. Merging those with a previous version's published rows is the
@@ -19,26 +19,26 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from sciencebeam_dataset_builder.benchmark.allocate import (
+from sciencebeam_dataset_builder.nested_corpus.allocate import (
     Allocation,
     AllocationError,
     MetadataRow,
     allocate,
     log_allocation,
 )
-from sciencebeam_dataset_builder.benchmark.config import (
-    BenchmarkConfig,
+from sciencebeam_dataset_builder.nested_corpus.config import (
+    CorpusConfig,
     ConfigError,
     dump_config,
     find_lowered_counts,
     load_config,
 )
-from sciencebeam_dataset_builder.benchmark.manifest import (
+from sciencebeam_dataset_builder.nested_corpus.manifest import (
     ManifestRow,
     read_manifest,
     write_manifest,
 )
-from sciencebeam_dataset_builder.benchmark.source import (
+from sciencebeam_dataset_builder.nested_corpus.source import (
     ArchiveSource,
     HfArchiveSource,
     LocalArchiveSource,
@@ -56,9 +56,9 @@ LOGGER = logging.getLogger(__name__)
 ADDED_DIRECTORY = "added"
 
 
-def version_name(version: int) -> str:
-    """Zero-padded, so a directory of versions keeps sorting correctly past nine."""
-    return f"benchmark-v{version:03d}"
+def version_name(config: CorpusConfig) -> str:
+    """The corpus's name and version, zero-padded so versions keep sorting past nine."""
+    return f"{config.name}-v{config.version:03d}"
 
 
 def added_rows(allocation: Allocation) -> list[ManifestRow]:
@@ -72,7 +72,7 @@ def as_metadata_rows(rows: Sequence[ManifestRow]) -> list[MetadataRow]:
 
 def write_added_documents(
     source: ArchiveSource,
-    config: BenchmarkConfig,
+    config: CorpusConfig,
     selected: Mapping[str, Sequence[MetadataRow]],
     split_of_id: Mapping[str, str],
     output_dir: Path,
@@ -115,7 +115,7 @@ def _by_split(
     ]
 
 
-def build_source(args: argparse.Namespace, config: BenchmarkConfig) -> ArchiveSource:
+def build_source(args: argparse.Namespace, config: CorpusConfig) -> ArchiveSource:
     """Local directory or dataset repo, with identical allocation either way."""
     if args.source_dir:
         return LocalArchiveSource(args.source_dir)
@@ -128,9 +128,7 @@ def build_source(args: argparse.Namespace, config: BenchmarkConfig) -> ArchiveSo
     return HfArchiveSource(repo_id, revision=args.source_revision)
 
 
-def with_recorded_revision(
-    config: BenchmarkConfig, source: ArchiveSource
-) -> BenchmarkConfig:
+def with_recorded_revision(config: CorpusConfig, source: ArchiveSource) -> CorpusConfig:
     """Record which archive revision was read, so a later version can check it."""
     revision = source.revision
     if revision is None:
@@ -144,7 +142,7 @@ def with_recorded_revision(
     )
 
 
-def check_previous_config(config: BenchmarkConfig, previous_path: Path) -> None:
+def check_previous_config(config: CorpusConfig, previous_path: Path) -> None:
     """The cheap half of the monotonicity check, before anything is read."""
     regressions = find_lowered_counts(load_config(previous_path), config)
     if regressions:
@@ -156,9 +154,9 @@ def check_previous_config(config: BenchmarkConfig, previous_path: Path) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Cut a benchmark version from an archive of ranked documents."
+        description="Cut a corpus version from an archive of ranked documents."
     )
-    parser.add_argument("config", type=Path, help="Benchmark config YAML to apply.")
+    parser.add_argument("config", type=Path, help="Corpus config YAML to apply.")
     parser.add_argument(
         "output_dir", type=Path, help="Directory to write this version into."
     )
@@ -241,7 +239,7 @@ def _run(args: argparse.Namespace) -> None:
         split_of_id={row.id: row.split for row in added},
         output_dir=args.output_dir,
     )
-    name = version_name(config.version)
+    name = version_name(config)
     write_manifest(args.output_dir / f"{name}.csv", allocation.rows)
     dump_config(with_recorded_revision(config, source), args.output_dir / f"{name}.yml")
 
