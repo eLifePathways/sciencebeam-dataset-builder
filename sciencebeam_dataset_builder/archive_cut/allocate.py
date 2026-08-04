@@ -16,8 +16,8 @@ import dataclasses
 import logging
 from collections.abc import Iterable, Sequence
 
-from sciencebeam_dataset_builder.nested_corpus.config import CorpusConfig
-from sciencebeam_dataset_builder.nested_corpus.manifest import (
+from sciencebeam_dataset_builder.archive_cut.config import CorpusConfig
+from sciencebeam_dataset_builder.archive_cut.manifest import (
     ManifestRow,
     ids_by_stratum_split,
 )

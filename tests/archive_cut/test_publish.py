@@ -1,12 +1,12 @@
-"""Tests for nested_corpus.publish and upload — merging, exclusions, batching, retries."""
+"""Tests for archive_cut.publish and upload — merging, exclusions, batching, retries."""
 
 from pathlib import Path
 
 import pyarrow as pa
 import pytest
 
-from sciencebeam_dataset_builder.nested_corpus.manifest import ManifestRow
-from sciencebeam_dataset_builder.nested_corpus.publish import (
+from sciencebeam_dataset_builder.archive_cut.manifest import ManifestRow
+from sciencebeam_dataset_builder.archive_cut.publish import (
     PreparedSplit,
     PublishError,
     check_output_schema,
@@ -15,8 +15,8 @@ from sciencebeam_dataset_builder.nested_corpus.publish import (
     manifest_without_failures,
     merge_split,
 )
-from sciencebeam_dataset_builder.nested_corpus.render import RenderFailure
-from sciencebeam_dataset_builder.nested_corpus.upload import (
+from sciencebeam_dataset_builder.archive_cut.render import RenderFailure
+from sciencebeam_dataset_builder.archive_cut.upload import (
     FileToPublish,
     LocalPublishTarget,
     UploadError,
@@ -25,7 +25,7 @@ from sciencebeam_dataset_builder.nested_corpus.upload import (
     batched,
 )
 
-from tests.nested_corpus._helpers import archive_config
+from tests.archive_cut._helpers import archive_config
 
 SPLITS = ["test", "validation"]
 

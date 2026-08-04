@@ -1,8 +1,8 @@
-"""Tests for corpus.allocate — the nesting invariant and its rejection cases."""
+"""Tests for archive_cut.allocate — the nesting invariant and its rejection cases."""
 
 import pytest
 
-from sciencebeam_dataset_builder.nested_corpus.allocate import (
+from sciencebeam_dataset_builder.archive_cut.allocate import (
     AllocationError,
     ArchiveChangedError,
     MetadataRow,
@@ -10,9 +10,9 @@ from sciencebeam_dataset_builder.nested_corpus.allocate import (
     _check_superset_of_previous,
     allocate,
 )
-from sciencebeam_dataset_builder.nested_corpus.manifest import ManifestRow
+from sciencebeam_dataset_builder.archive_cut.manifest import ManifestRow
 
-from tests.nested_corpus._helpers import config, metadata, paper_id, ranks_in
+from tests.archive_cut._helpers import config, metadata, paper_id, ranks_in
 
 SPLITS = ["test", "validation"]
 

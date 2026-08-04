@@ -1,8 +1,8 @@
-"""Tests for corpus.config — validation, round-tripping and the cheap count check."""
+"""Tests for archive_cut.config — validation, round-tripping and the cheap count check."""
 
 import pytest
 
-from sciencebeam_dataset_builder.nested_corpus.config import (
+from sciencebeam_dataset_builder.archive_cut.config import (
     ConfigError,
     config_from_dict,
     config_to_dict,
@@ -11,7 +11,7 @@ from sciencebeam_dataset_builder.nested_corpus.config import (
     load_config,
 )
 
-from tests.nested_corpus._helpers import config
+from tests.archive_cut._helpers import config
 
 SPLITS = ["test", "validation"]
 

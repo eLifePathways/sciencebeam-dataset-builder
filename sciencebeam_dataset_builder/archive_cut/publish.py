@@ -17,9 +17,9 @@ from collections.abc import Mapping, Sequence
 
 import pyarrow as pa
 
-from sciencebeam_dataset_builder.nested_corpus.config import CorpusConfig
-from sciencebeam_dataset_builder.nested_corpus.manifest import ManifestRow
-from sciencebeam_dataset_builder.nested_corpus.render import RenderFailure
+from sciencebeam_dataset_builder.archive_cut.config import CorpusConfig
+from sciencebeam_dataset_builder.archive_cut.manifest import ManifestRow
+from sciencebeam_dataset_builder.archive_cut.render import RenderFailure
 
 LOGGER = logging.getLogger(__name__)
 

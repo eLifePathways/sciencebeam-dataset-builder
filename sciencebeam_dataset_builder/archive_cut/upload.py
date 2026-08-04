@@ -47,6 +47,9 @@ class PublishTarget(Protocol):
     def fetch(self, path_in_repo: str, into: Path) -> Path | None:
         """Retrieve an already-published file, or None if there is none."""
 
+    def list_files(self) -> list[str]:
+        """Every path already published, so the latest version can be found."""
+
 
 class LocalPublishTarget:
     """Publish into a directory — a dry run, and what the tests use."""
@@ -73,6 +76,15 @@ class LocalPublishTarget:
         candidate = self.directory / path_in_repo
         return candidate if candidate.exists() else None
 
+    def list_files(self) -> list[str]:
+        if not self.directory.is_dir():
+            return []
+        return sorted(
+            str(path.relative_to(self.directory))
+            for path in self.directory.rglob("*")
+            if path.is_file()
+        )
+
 
 class HfPublishTarget:
     """Publish to a dataset repo on the Hub."""
@@ -83,6 +95,7 @@ class HfPublishTarget:
         revision: str | None = None,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
         backoff_seconds: float = DEFAULT_BACKOFF_SECONDS,
+        create: bool = False,
     ) -> None:
         from huggingface_hub import HfApi
 
@@ -91,9 +104,33 @@ class HfPublishTarget:
         self._api = HfApi()
         self._max_attempts = max_attempts
         self._backoff_seconds = backoff_seconds
+        self._create = create
+        self._created = False
+
+    def _ensure_repo(self) -> None:
+        """Create the repo, only when asked to.
+
+        Off by default: creating a repo is not something a publish should do as a side
+        effect. Private, because a corpus cut from a non-redistributable archive must not
+        default to being world-readable.
+        """
+        if not self._create or self._created:
+            return
+        self._with_retries(
+            lambda: self._api.create_repo(
+                repo_id=self.repo_id,
+                repo_type="dataset",
+                private=True,
+                exist_ok=True,
+            ),
+            what=f"creating {self.repo_id}",
+        )
+        self._created = True
 
     def publish(self, files: Sequence[FileToPublish], message: str) -> None:
         from huggingface_hub import CommitOperationAdd
+
+        self._ensure_repo()
 
         operations = [
             # The repo path comes first and the local path second; they differ here, so
@@ -141,6 +178,35 @@ class HfPublishTarget:
         except EntryNotFoundError:
             return None
         return Path(downloaded)
+
+    def list_files(self) -> list[str]:
+        """Every published path, or nothing if the repo does not exist yet.
+
+        Only a missing repo counts as "nothing published" — the normal state before a
+        first version. Any other failure propagates, because a run that cannot see the
+        previous version must not proceed as though there were none: it would produce a
+        version that silently fails to contain its predecessor.
+        """
+        from huggingface_hub.errors import RepositoryNotFoundError
+
+        files: list[str] = []
+
+        def collect() -> None:
+            files.clear()
+            files.extend(
+                self._api.list_repo_files(
+                    self.repo_id, repo_type="dataset", revision=self.revision
+                )
+            )
+
+        try:
+            self._with_retries(collect, what=f"listing {self.repo_id}")
+        except UploadError as exc:
+            if isinstance(exc.__cause__, RepositoryNotFoundError):
+                LOGGER.info("%s does not exist yet; nothing published", self.repo_id)
+                return []
+            raise
+        return files
 
     def _with_retries(self, action: Callable[[], object], what: str) -> None:
         last_error: Exception | None = None

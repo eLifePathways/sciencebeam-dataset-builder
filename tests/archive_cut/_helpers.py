@@ -11,13 +11,13 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from sciencebeam_dataset_builder.nested_corpus.allocate import MetadataRow
-from sciencebeam_dataset_builder.nested_corpus.config import (
+from sciencebeam_dataset_builder.archive_cut.allocate import MetadataRow
+from sciencebeam_dataset_builder.archive_cut.config import (
     CorpusConfig,
     config_from_dict,
     config_to_dict,
 )
-from sciencebeam_dataset_builder.nested_corpus.manifest import ManifestRow
+from sciencebeam_dataset_builder.archive_cut.manifest import ManifestRow
 
 
 def paper_id(stratum: str, rank: int) -> str:

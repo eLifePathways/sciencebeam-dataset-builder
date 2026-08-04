@@ -1,8 +1,8 @@
-"""Tests for corpus.manifest — the published record of which document is where."""
+"""Tests for archive_cut.manifest — the published record of which document is where."""
 
 import pytest
 
-from sciencebeam_dataset_builder.nested_corpus.manifest import (
+from sciencebeam_dataset_builder.archive_cut.manifest import (
     MANIFEST_FIELDS,
     ManifestError,
     ManifestRow,

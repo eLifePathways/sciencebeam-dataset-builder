@@ -1,4 +1,4 @@
-"""Tests for nested_corpus.render_cli — adding PDFs to a cut, and recording failures."""
+"""Tests for archive_cut.render_cli — adding PDFs to a cut, and recording failures."""
 
 import stat
 import sys
@@ -8,12 +8,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from sciencebeam_dataset_builder.nested_corpus.render import RenderError
-from sciencebeam_dataset_builder.nested_corpus.render_cli import (
-    CONVERTER_COLUMN,
+from sciencebeam_dataset_builder.archive_cut.render import RenderError
+from sciencebeam_dataset_builder.archive_cut.layout import (
     FAILURES_FILENAME,
-    PDF_COLUMN,
     RENDERED_DIRECTORY,
+)
+from sciencebeam_dataset_builder.archive_cut.render_cli import (
+    CONVERTER_COLUMN,
+    PDF_COLUMN,
     main,
     read_failures,
 )

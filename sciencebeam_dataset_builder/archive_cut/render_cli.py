@@ -19,8 +19,12 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from sciencebeam_dataset_builder.nested_corpus.cut_cli import ADDED_DIRECTORY
-from sciencebeam_dataset_builder.nested_corpus.render import (
+from sciencebeam_dataset_builder.archive_cut.layout import (
+    ADDED_DIRECTORY,
+    FAILURES_FILENAME,
+    RENDERED_DIRECTORY,
+)
+from sciencebeam_dataset_builder.archive_cut.render import (
     DEFAULT_CONVERTER,
     DEFAULT_TIMEOUT_SECONDS,
     RenderError,
@@ -31,8 +35,6 @@ from sciencebeam_dataset_builder.nested_corpus.render import (
 
 LOGGER = logging.getLogger(__name__)
 
-RENDERED_DIRECTORY = "rendered"
-FAILURES_FILENAME = "render-failures.csv"
 FAILURE_FIELDS = ["id", "reason"]
 
 PDF_COLUMN = "pdf"
@@ -132,7 +134,7 @@ class _WorkDir:
         if self._path is not None:
             self._path.mkdir(parents=True, exist_ok=True)
             return self._path
-        self._temporary = tempfile.mkdtemp(prefix="nested-corpus-render-")
+        self._temporary = tempfile.mkdtemp(prefix="archive-cut-render-")
         return Path(self._temporary)
 
     def __exit__(self, *exc_info: object) -> None:

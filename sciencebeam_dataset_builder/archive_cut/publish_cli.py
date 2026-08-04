@@ -15,19 +15,28 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from sciencebeam_dataset_builder.nested_corpus.config import (
+from sciencebeam_dataset_builder.archive_cut.config import (
     ConfigError,
     CorpusConfig,
     dump_config,
     load_config,
 )
-from sciencebeam_dataset_builder.nested_corpus.cut_cli import version_name
-from sciencebeam_dataset_builder.nested_corpus.manifest import (
+from sciencebeam_dataset_builder.archive_cut.layout import (
+    FAILURES_FILENAME,
+    PUBLISHED_DIRECTORY,
+    RENDERED_DIRECTORY,
+    SPLITS_DIRECTORY,
+    config_path_in_repo,
+    manifest_path_in_repo,
+    split_path_in_repo,
+    version_name,
+)
+from sciencebeam_dataset_builder.archive_cut.manifest import (
     ManifestRow,
     read_manifest,
     write_manifest,
 )
-from sciencebeam_dataset_builder.nested_corpus.publish import (
+from sciencebeam_dataset_builder.archive_cut.publish import (
     PreparedSplit,
     PublishError,
     check_output_schema,
@@ -36,13 +45,9 @@ from sciencebeam_dataset_builder.nested_corpus.publish import (
     manifest_without_failures,
     merge_split,
 )
-from sciencebeam_dataset_builder.nested_corpus.render import RenderFailure
-from sciencebeam_dataset_builder.nested_corpus.render_cli import (
-    FAILURES_FILENAME,
-    RENDERED_DIRECTORY,
-    read_failures,
-)
-from sciencebeam_dataset_builder.nested_corpus.upload import (
+from sciencebeam_dataset_builder.archive_cut.render import RenderFailure
+from sciencebeam_dataset_builder.archive_cut.render_cli import read_failures
+from sciencebeam_dataset_builder.archive_cut.upload import (
     DEFAULT_BATCH_SIZE,
     FileToPublish,
     HfPublishTarget,
@@ -53,22 +58,6 @@ from sciencebeam_dataset_builder.nested_corpus.upload import (
 )
 
 LOGGER = logging.getLogger(__name__)
-
-PUBLISHED_DIRECTORY = "published"
-SPLITS_DIRECTORY = "splits"
-
-
-def split_path_in_repo(split: str) -> str:
-    """One file per split at the repo root, which is what readers expect to name."""
-    return f"{split}.parquet"
-
-
-def manifest_path_in_repo(config: CorpusConfig) -> str:
-    return f"{SPLITS_DIRECTORY}/{version_name(config)}.csv"
-
-
-def config_path_in_repo(config: CorpusConfig) -> str:
-    return f"{SPLITS_DIRECTORY}/{version_name(config)}.yml"
 
 
 def find_version_files(version_dir: Path) -> tuple[Path, Path]:
@@ -172,11 +161,11 @@ def publish(
         [
             FileToPublish(
                 local_path=output_dir / SPLITS_DIRECTORY / f"{name}.csv",
-                path_in_repo=manifest_path_in_repo(config),
+                path_in_repo=manifest_path_in_repo(config.name, config.version),
             ),
             FileToPublish(
                 local_path=output_dir / SPLITS_DIRECTORY / f"{name}.yml",
-                path_in_repo=config_path_in_repo(config),
+                path_in_repo=config_path_in_repo(config.name, config.version),
             ),
         ],
         f"Add {name} manifest and config",
@@ -196,7 +185,7 @@ def build_target(args: argparse.Namespace, config: CorpusConfig) -> PublishTarge
             "nowhere to publish: pass --target-repo, --target-dir or --dry-run, or set "
             "target.repo_id in the config"
         )
-    return HfPublishTarget(repo_id)
+    return HfPublishTarget(repo_id, create=args.create_repo)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -228,6 +217,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=DEFAULT_BATCH_SIZE,
         help=f"Data files per commit (default: {DEFAULT_BATCH_SIZE}).",
+    )
+    parser.add_argument(
+        "--create-repo",
+        action="store_true",
+        help="Create the target repo (private) if it does not exist yet.",
     )
     parser.add_argument(
         "--no-tag",
@@ -263,7 +257,7 @@ def _run(args: argparse.Namespace) -> None:
     target = build_target(args, config)
     output_dir = args.version_dir / PUBLISHED_DIRECTORY
 
-    with tempfile.TemporaryDirectory(prefix="nested-corpus-publish-") as work:
+    with tempfile.TemporaryDirectory(prefix="archive-cut-publish-") as work:
         prepared = prepare_splits(
             config=config,
             rows=kept,

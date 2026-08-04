@@ -1,18 +1,15 @@
-"""Tests for corpus.cut_cli — cutting a version end to end from a local archive."""
+"""Tests for archive_cut.cut_cli — cutting a version end to end from a local archive."""
 
 import csv
 
 import pyarrow.parquet as pq
 import pytest
 
-from sciencebeam_dataset_builder.nested_corpus.config import load_config
-from sciencebeam_dataset_builder.nested_corpus.cut_cli import (
-    main,
-    parse_args,
-    version_name,
-)
+from sciencebeam_dataset_builder.archive_cut.config import load_config
+from sciencebeam_dataset_builder.archive_cut.cut_cli import main, parse_args
+from sciencebeam_dataset_builder.archive_cut.layout import version_name
 
-from tests.nested_corpus._helpers import (
+from tests.archive_cut._helpers import (
     archive_config,
     document_bytes,
     paper_id,

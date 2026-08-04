@@ -24,8 +24,8 @@ from typing import Any, Protocol
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from sciencebeam_dataset_builder.nested_corpus.allocate import MetadataRow
-from sciencebeam_dataset_builder.nested_corpus.config import CorpusConfig
+from sciencebeam_dataset_builder.archive_cut.allocate import MetadataRow
+from sciencebeam_dataset_builder.archive_cut.config import CorpusConfig
 
 LOGGER = logging.getLogger(__name__)
 

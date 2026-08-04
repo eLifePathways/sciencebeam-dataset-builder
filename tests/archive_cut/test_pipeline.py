@@ -13,16 +13,16 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
-from sciencebeam_dataset_builder.nested_corpus.config import (
+from sciencebeam_dataset_builder.archive_cut.config import (
     config_from_dict,
     config_to_dict,
     load_config,
 )
-from sciencebeam_dataset_builder.nested_corpus.cut_cli import main as cut_main
-from sciencebeam_dataset_builder.nested_corpus.publish_cli import main as publish_main
-from sciencebeam_dataset_builder.nested_corpus.render_cli import main as render_main
+from sciencebeam_dataset_builder.archive_cut.cut_cli import main as cut_main
+from sciencebeam_dataset_builder.archive_cut.publish_cli import main as publish_main
+from sciencebeam_dataset_builder.archive_cut.render_cli import main as render_main
 
-from tests.nested_corpus._helpers import (
+from tests.archive_cut._helpers import (
     archive_config,
     paper_id,
     write_archive,
@@ -124,10 +124,10 @@ class TestFirstVersion:
         cut_main([str(config_path), str(version_dir), "--source-dir", str(archive)])
         render_main([str(version_dir), "--converter", converter])
 
-        from sciencebeam_dataset_builder.nested_corpus.upload import LocalPublishTarget
+        from sciencebeam_dataset_builder.archive_cut.upload import LocalPublishTarget
 
         recorded = LocalPublishTarget(repo)
-        from sciencebeam_dataset_builder.nested_corpus import publish_cli
+        from sciencebeam_dataset_builder.archive_cut import publish_cli
 
         original = publish_cli.build_target
         publish_cli.build_target = lambda args, config: recorded

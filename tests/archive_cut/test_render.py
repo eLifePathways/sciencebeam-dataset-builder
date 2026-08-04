@@ -1,4 +1,4 @@
-"""Tests for benchmark rendering — every failure mode surfaces per document."""
+"""Tests for archive_cut.render — every failure mode surfaces per document."""
 
 import stat
 import sys
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from sciencebeam_dataset_builder.nested_corpus.render import (
+from sciencebeam_dataset_builder.archive_cut.render import (
     RenderError,
     converter_version,
     pdf_page_count,
