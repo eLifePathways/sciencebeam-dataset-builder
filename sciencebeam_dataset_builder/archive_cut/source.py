@@ -17,7 +17,8 @@ silently worked around.
 import dataclasses
 import json
 import logging
-from collections.abc import Iterator, Mapping, Sequence
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -34,6 +35,9 @@ SHARD_RANK_FROM_FIELD = "rank_from"
 SHARD_RANK_TO_FIELD = "rank_to"
 SHARD_ROWS_FIELD = "rows"
 SHARD_FILE_BYTES_FIELD = "file_bytes"
+
+READ_ATTEMPTS = 4
+READ_BACKOFF_SECONDS = 5.0
 
 
 class SourceError(ValueError):
@@ -116,7 +120,9 @@ class HfArchiveSource:
 
         self.repo_id = repo_id
         self._api = HfApi()
-        self._fs = HfFileSystem()
+        # Our own instance rather than fsspec's cached one, so nothing else in the
+        # process can close the HTTP client out from under an open shard.
+        self._fs = HfFileSystem(skip_instance_cache=True)
         info = self._api.repo_info(repo_id, repo_type="dataset", revision=revision)
         # Resolve to a commit so the config records which archive was read, not a
         # branch name that could later point elsewhere.
@@ -142,6 +148,12 @@ class HfArchiveSource:
         return pq.ParquetFile(
             self._fs.open(f"datasets/{self.repo_id}@{revision}/{name}", "rb")
         )
+
+    def reconnect(self) -> None:
+        """Rebuild the filesystem, discarding whatever state broke."""
+        from huggingface_hub import HfFileSystem
+
+        self._fs = HfFileSystem(skip_instance_cache=True)
 
 
 def parse_metadata(text: str, config: CorpusConfig) -> list[MetadataRow]:
@@ -220,9 +232,17 @@ def _require_int(record: Mapping[str, Any], field: str, line_number: int) -> int
         ) from exc
 
 
+@dataclasses.dataclass
+class SelectedShard:
+    """A shard that must be read, and the documents wanted from it."""
+
+    shard: ShardInfo
+    rows: list[MetadataRow]
+
+
 def shards_for(
     wanted: Sequence[MetadataRow], shards: Sequence[ShardInfo]
-) -> dict[str, list[MetadataRow]]:
+) -> dict[str, SelectedShard]:
     """Map each shard that must be read to the documents wanted from it.
 
     Shards holding nothing wanted are simply absent, which is the whole point: a cut
@@ -232,12 +252,12 @@ def shards_for(
     for shard in shards:
         by_stratum.setdefault(shard.stratum, []).append(shard)
 
-    selected: dict[str, list[MetadataRow]] = {}
+    selected: dict[str, SelectedShard] = {}
     for row in wanted:
         shard = _shard_holding(row, by_stratum.get(row.stratum, []))
-        selected.setdefault(shard.filename, []).append(row)
-    for rows in selected.values():
-        rows.sort(key=lambda row: row.rank)
+        selected.setdefault(shard.filename, SelectedShard(shard, [])).rows.append(row)
+    for item in selected.values():
+        item.rows.sort(key=lambda row: row.rank)
     return selected
 
 
@@ -271,8 +291,9 @@ def resolve_columns(config: CorpusConfig, available: set[str]) -> list[str]:
 
 def iter_document_batches(
     source: ArchiveSource,
-    selected: Mapping[str, Sequence[MetadataRow]],
+    selected: Mapping[str, SelectedShard],
     config: CorpusConfig,
+    on_progress: Callable[[str, int], None] | None = None,
 ) -> Iterator[pa.Table]:
     """Yield one table per shard, holding only the wanted rows of that shard.
 
@@ -280,38 +301,66 @@ def iter_document_batches(
     single documents in this archive reach 100 MiB.
     """
     for filename in sorted(selected):
-        wanted = selected[filename]
-        LOGGER.info("Reading %d document(s) from %s", len(wanted), filename)
-        yield _read_shard_rows(source, filename, wanted, config)
+        item = selected[filename]
+        LOGGER.info("Reading %d document(s) from %s", len(item.rows), filename)
+        table = _read_shard_rows_with_retries(source, filename, item, config)
+        if on_progress is not None:
+            on_progress(filename, table.num_rows)
+        yield table
+
+
+def _read_shard_rows_with_retries(
+    source: ArchiveSource,
+    filename: str,
+    selected: SelectedShard,
+    config: CorpusConfig,
+    attempts: int = READ_ATTEMPTS,
+) -> pa.Table:
+    """Read one shard, reopening it on failure.
+
+    A cut makes many ranged requests over many minutes, so a dropped connection or a
+    closed client is a thing to expect rather than an exception. A SourceError is not
+    retried: it means the archive does not hold what the manifest says, which will not
+    improve by asking again.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return _read_shard_rows(source, filename, selected, config)
+        except SourceError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — anything transport-shaped is retried
+            if attempt == attempts:
+                raise SourceError(
+                    f"could not read {filename} after {attempts} attempt(s): {exc}"
+                ) from exc
+            delay = READ_BACKOFF_SECONDS * attempt
+            LOGGER.warning(
+                "Reading %s failed (attempt %d/%d): %s — retrying in %.0fs",
+                filename,
+                attempt,
+                attempts,
+                exc,
+                delay,
+            )
+            reconnect = getattr(source, "reconnect", None)
+            if callable(reconnect):
+                reconnect()
+            time.sleep(delay)
+    raise SourceError(f"could not read {filename}")
 
 
 def _read_shard_rows(
     source: ArchiveSource,
     filename: str,
-    wanted: Sequence[MetadataRow],
+    selected: SelectedShard,
     config: CorpusConfig,
 ) -> pa.Table:
     parquet_file = source.open_parquet(filename)
     id_column = config.id_column
     columns = resolve_columns(config, set(parquet_file.schema_arrow.names))
+    wanted = selected.rows
 
-    # The id column is small and read first, both to locate rows and to confirm this
-    # shard really holds them. Row-group statistics would be cheaper but would not
-    # catch an archive whose rows have moved.
-    ids = parquet_file.read(columns=[id_column]).column(id_column).to_pylist()
-    row_of_id = {str(value): index for index, value in enumerate(ids)}
-
-    wanted_indices: list[int] = []
-    for row in wanted:
-        index = row_of_id.get(row.id)
-        if index is None:
-            raise SourceError(
-                f"document {row.id!r} is not in {filename}, which the shard manifest "
-                f"says holds ranks {row.rank} of stratum {row.stratum!r}. The archive "
-                f"appears to have been re-sorted or re-sharded."
-            )
-        wanted_indices.append(index)
-
+    wanted_indices = _locate_rows(parquet_file, filename, selected, id_column)
     group_indices = _row_groups_for_rows(parquet_file, wanted_indices)
     LOGGER.debug(
         "%s: %d of %d row group(s) hold the %d wanted row(s)",
@@ -320,26 +369,137 @@ def _read_shard_rows(
         parquet_file.num_row_groups,
         len(wanted_indices),
     )
+    LOGGER.debug(
+        "%s: fetching %s from %d row group(s)",
+        filename,
+        _format_bytes(_compressed_bytes(parquet_file, group_indices, columns)),
+        len(group_indices),
+    )
     table = parquet_file.read_row_groups(group_indices, columns=list(columns))
     return _select_ids_in_order(table, id_column, [row.id for row in wanted])
+
+
+def _compressed_bytes(
+    parquet_file: pq.ParquetFile, groups: Sequence[int], columns: Sequence[str]
+) -> int:
+    """Compressed size of the column chunks a read of these row groups fetches."""
+    names = list(parquet_file.schema_arrow.names)
+    indices = [names.index(column) for column in columns if column in names]
+    return sum(
+        parquet_file.metadata.row_group(group).column(index).total_compressed_size
+        for group in groups
+        for index in indices
+    )
+
+
+def _format_bytes(value: float) -> str:
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024 or unit == "GiB":
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} GiB"
+
+
+def _group_boundaries(parquet_file: pq.ParquetFile) -> list[tuple[int, int, int]]:
+    """(first row, last row + 1, index) per row group, computed once."""
+    boundaries: list[tuple[int, int, int]] = []
+    first = 0
+    for index in range(parquet_file.num_row_groups):
+        rows = parquet_file.metadata.row_group(index).num_rows
+        boundaries.append((first, first + rows, index))
+        first += rows
+    return boundaries
+
+
+def _locate_rows(
+    parquet_file: pq.ParquetFile,
+    filename: str,
+    selected: SelectedShard,
+    id_column: str,
+) -> list[int]:
+    """Row offsets of the wanted documents within the shard.
+
+    Reading the whole id column to find them costs a request per row group, which on a
+    500 MB shard is most of the work before any payload arrives. The manifest's rank
+    range gives the offsets arithmetically instead — rows are in rank order — and only
+    the row groups about to be read are then verified, which keeps the guarantee that a
+    moved archive is caught rather than mis-read.
+    """
+    boundaries = _group_boundaries(parquet_file)
+    offsets = [row.rank - selected.shard.rank_from for row in selected.rows]
+    total_rows = parquet_file.metadata.num_rows
+    if all(0 <= offset < total_rows for offset in offsets):
+        if _offsets_hold_wanted_ids(
+            parquet_file, boundaries, offsets, selected, id_column
+        ):
+            return offsets
+        LOGGER.warning(
+            "%s does not hold its ranks where the manifest implies; falling back to "
+            "scanning its ids. The archive may have been re-sharded.",
+            filename,
+        )
+
+    # Fallback: the whole id column. Slower, and it establishes whether the documents are
+    # in this shard at all rather than merely where.
+    ids = parquet_file.read(columns=[id_column]).column(id_column).to_pylist()
+    row_of_id = {str(value): index for index, value in enumerate(ids)}
+    located: list[int] = []
+    for row in selected.rows:
+        index = row_of_id.get(row.id)
+        if index is None:
+            raise SourceError(
+                f"document {row.id!r} is not in {filename}, which the shard manifest "
+                f"says holds ranks {selected.shard.rank_from}-{selected.shard.rank_to} "
+                f"of stratum {row.stratum!r}. The archive appears to have been "
+                f"re-sorted or re-sharded."
+            )
+        located.append(index)
+    return located
+
+
+def _offsets_hold_wanted_ids(
+    parquet_file: pq.ParquetFile,
+    boundaries: Sequence[tuple[int, int, int]],
+    offsets: Sequence[int],
+    selected: SelectedShard,
+    id_column: str,
+) -> bool:
+    """Whether the computed offsets really carry the wanted ids.
+
+    Reads the id column of only the row groups holding those offsets. Those groups need
+    not be adjacent, so each offset is mapped to its position in the concatenated read
+    rather than assumed to be a fixed distance from the first.
+    """
+    groups = _row_groups_for_rows(parquet_file, offsets)
+    if not groups:
+        return False
+    position_of_offset: dict[int, int] = {}
+    cursor = 0
+    for group in groups:
+        first, last, _ = boundaries[group]
+        for row_index in range(first, last):
+            position_of_offset[row_index] = cursor + (row_index - first)
+        cursor += last - first
+
+    table = parquet_file.read_row_groups(list(groups), columns=[id_column])
+    ids = [str(value) for value in table.column(id_column).to_pylist()]
+    for offset, row in zip(offsets, selected.rows, strict=True):
+        position = position_of_offset.get(offset)
+        if position is None or ids[position] != row.id:
+            return False
+    return True
 
 
 def _row_groups_for_rows(
     parquet_file: pq.ParquetFile, row_indices: Sequence[int]
 ) -> list[int]:
     """Return the row groups covering the given row offsets, in order."""
-    boundaries: list[tuple[int, int, int]] = []
-    start = 0
-    for group_index in range(parquet_file.num_row_groups):
-        rows = parquet_file.metadata.row_group(group_index).num_rows
-        boundaries.append((start, start + rows, group_index))
-        start += rows
-
+    boundaries = _group_boundaries(parquet_file)
     needed: set[int] = set()
     for row_index in row_indices:
-        for group_start, group_end, group_index in boundaries:
-            if group_start <= row_index < group_end:
-                needed.add(group_index)
+        for first, last, index in boundaries:
+            if first <= row_index < last:
+                needed.add(index)
                 break
     return sorted(needed)
 
@@ -355,9 +515,14 @@ def _select_ids_in_order(
 
 
 def describe_read_cost(
-    selected: Mapping[str, Sequence[MetadataRow]], shards: Sequence[ShardInfo]
+    selected: Mapping[str, SelectedShard], shards: Sequence[ShardInfo]
 ) -> str:
-    """Summarise how much of the archive a cut touches, for the plan output."""
+    """Summarise how much of the archive a cut touches, for the plan output.
+
+    Deliberately not phrased as bytes to be downloaded: these are whole-shard sizes,
+    while the read fetches only the row groups holding wanted rows. The download is
+    closer to the payload of the wanted documents than to this figure.
+    """
     by_filename = {shard.filename: shard for shard in shards}
     selected_bytes = sum(
         by_filename[filename].file_bytes or 0
@@ -366,10 +531,10 @@ def describe_read_cost(
     )
     total_bytes = sum(shard.file_bytes or 0 for shard in shards)
     share = f"{100 * selected_bytes / total_bytes:.1f}%" if total_bytes else "unknown"
-    # An upper bound: these are whole-shard sizes, and a ranged read fetches only the
-    # row groups holding wanted rows.
+    documents = sum(len(item.rows) for item in selected.values())
     return (
-        f"{len(selected)} of {len(shards)} shard(s) hold the documents to read, "
-        f"at most {selected_bytes / 1024**2:.1f} MiB of "
-        f"{total_bytes / 1024**2:.1f} MiB ({share} of the archive)"
+        f"{documents} document(s) live in {len(selected)} of {len(shards)} shard(s) "
+        f"({selected_bytes / 1024**2:.0f} MiB of {total_bytes / 1024**2:.0f} MiB, "
+        f"{share} of the archive). Only the row groups holding them are fetched, so the "
+        f"download is a fraction of that -- run with --debug to see it per shard."
     )

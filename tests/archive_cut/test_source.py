@@ -120,7 +120,7 @@ class TestShardsFor:
         ]
         selected = shards_for(wanted, shards)
         assert {
-            name: [row.rank for row in rows] for name, rows in selected.items()
+            name: [row.rank for row in item.rows] for name, item in selected.items()
         } == {
             "alpha-00000-of-00002.parquet": [0],
             "alpha-00001-of-00002.parquet": [4, 5],
@@ -286,7 +286,10 @@ class TestDescribeReadCost:
         shards = parse_shard_manifest(source.read_text("shards.jsonl"), config)
         wanted = [MetadataRow(id=paper_id("alpha", 0), stratum="alpha", rank=0)]
         described = describe_read_cost(shards_for(wanted, shards), shards)
-        assert described.startswith("1 of 4 shard(s)")
+        assert "1 of 4 shard(s)" in described
+        # The figure must not read as bytes to be downloaded: whole shards are bigger
+        # than the row groups a read actually fetches.
+        assert "Only the row groups holding them are fetched" in described
 
     def test_survives_a_manifest_without_byte_counts(self):
         shards = [

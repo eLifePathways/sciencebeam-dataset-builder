@@ -14,8 +14,9 @@ import dataclasses
 import logging
 import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -51,8 +52,11 @@ from sciencebeam_dataset_builder.archive_cut.upload import (
     LocalPublishTarget,
     PublishTarget,
 )
+from tqdm import tqdm
+
 from sciencebeam_dataset_builder.archive_cut.source import (
     ArchiveSource,
+    SelectedShard,
     HfArchiveSource,
     LocalArchiveSource,
     ShardInfo,
@@ -79,7 +83,7 @@ def as_metadata_rows(rows: Sequence[ManifestRow]) -> list[MetadataRow]:
 def write_added_documents(
     source: ArchiveSource,
     config: CorpusConfig,
-    selected: Mapping[str, Sequence[MetadataRow]],
+    selected: Mapping[str, SelectedShard],
     split_of_id: Mapping[str, str],
     output_dir: Path,
 ) -> dict[str, int]:
@@ -87,8 +91,17 @@ def write_added_documents(
     added_dir = output_dir / ADDED_DIRECTORY
     writers: dict[str, pq.ParquetWriter] = {}
     written: dict[str, int] = {}
+    total = sum(len(item.rows) for item in selected.values())
+    # A shard can take minutes over ranged reads, so the count of documents is the only
+    # honest measure of progress; the request log is not one.
+    progress = tqdm(total=total, unit="doc", desc="Reading documents")
     try:
-        for table in iter_document_batches(source, selected, config):
+        for table in iter_document_batches(
+            source,
+            selected,
+            config,
+            on_progress=_progress_update(progress),
+        ):
             for split, subset in _by_split(table, config.id_column, split_of_id):
                 if split not in writers:
                     # Created here rather than up front, so a version that adds nothing
@@ -104,9 +117,19 @@ def write_added_documents(
                 writers[split].write_table(subset)
                 written[split] = written.get(split, 0) + subset.num_rows
     finally:
+        progress.close()
         for writer in writers.values():
             writer.close()
     return written
+
+
+def _progress_update(progress: Any) -> Callable[[str, int], None]:
+    """tqdm.update returns a bool, which the callback type does not want."""
+
+    def update(_filename: str, rows: int) -> None:
+        progress.update(rows)
+
+    return update
 
 
 def _by_split(
