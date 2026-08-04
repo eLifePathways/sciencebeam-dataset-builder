@@ -3,7 +3,7 @@ OUTPUT_DIR ?= ./output
 SPLIT_OUTPUT_DIR ?= ./sciencebeam_dataset_builder/split_parquet_files/output_files
 CORPUS_OUTPUT_DIR ?= $(OUTPUT_DIR)/nested-corpus
 
-.PHONY: install lint format run test build clean typecheck metadata split explore-scielo-preprints-jats split-parquet nested-corpus-cut
+.PHONY: install lint format run test build clean typecheck metadata split explore-scielo-preprints-jats split-parquet nested-corpus-cut nested-corpus-render nested-corpus-publish
 
 install:
 	uv sync --frozen
@@ -57,6 +57,15 @@ scielo-preprints-hf-dataset:
 nested-corpus-cut:
 	uv run -m sciencebeam_dataset_builder.nested_corpus.cut_cli \
 		$(CONFIG) $(CORPUS_OUTPUT_DIR) $(RUN_ARGS)
+
+# Needs LibreOffice on PATH, which is why it is a step of its own.
+nested-corpus-render:
+	uv run -m sciencebeam_dataset_builder.nested_corpus.render_cli \
+		$(CORPUS_OUTPUT_DIR) $(RUN_ARGS)
+
+nested-corpus-publish:
+	uv run -m sciencebeam_dataset_builder.nested_corpus.publish_cli \
+		$(CORPUS_OUTPUT_DIR) $(RUN_ARGS)
 
 split-parquet:
 	uv run python sciencebeam_dataset_builder/split_parquet_files/split_parquet.py \
