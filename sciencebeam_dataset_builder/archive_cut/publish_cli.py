@@ -51,7 +51,6 @@ from sciencebeam_dataset_builder.archive_cut.publish import (
 from sciencebeam_dataset_builder.archive_cut.render import RenderFailure
 from sciencebeam_dataset_builder.archive_cut.render_cli import read_failures
 from sciencebeam_dataset_builder.archive_cut.upload import (
-    DEFAULT_BATCH_SIZE,
     FileToPublish,
     HfPublishTarget,
     LocalPublishTarget,
@@ -61,6 +60,12 @@ from sciencebeam_dataset_builder.archive_cut.upload import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+# One commit per data file. Batching exists because one commit per file hit HTTP 429
+# during the archive build — but that was 151 shards, whereas a corpus has one file per
+# split. Here batching buys nothing and costs a great deal: both splits in a single commit
+# means a failure at 90% of an hours-long upload re-sends the file that had finished.
+DEFAULT_DATA_FILES_PER_COMMIT = 1
 
 
 def find_version_files(version_dir: Path) -> tuple[Path, Path]:
@@ -162,7 +167,7 @@ def publish(
     config: CorpusConfig,
     data_files: list[FileToPublish],
     output_dir: Path,
-    batch_size: int = DEFAULT_BATCH_SIZE,
+    batch_size: int = DEFAULT_DATA_FILES_PER_COMMIT,
     with_tag: bool = True,
 ) -> None:
     """Data first in batched commits, then the manifest and config, then the tag."""
@@ -230,8 +235,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=DEFAULT_BATCH_SIZE,
-        help=f"Data files per commit (default: {DEFAULT_BATCH_SIZE}).",
+        default=DEFAULT_DATA_FILES_PER_COMMIT,
+        help=(
+            f"Data files per commit (default: {DEFAULT_DATA_FILES_PER_COMMIT}). Raise it "
+            f"only for a corpus with many small split files."
+        ),
     )
     parser.add_argument(
         "--create-repo",

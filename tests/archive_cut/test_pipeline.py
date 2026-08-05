@@ -142,6 +142,33 @@ class TestFirstVersion:
         )
         assert recorded.tags == ["sample-v001"]
 
+    def test_each_data_file_is_its_own_commit(self, tmp_path, converter):
+        """A failure late in an hours-long upload must not re-send a finished file."""
+        archive = tmp_path / "archive"
+        write_archive(archive, {"alpha": 4})
+        repo = tmp_path / "repo"
+        cfg = archive_config(splits=SPLITS, default={"test": 1, "validation": 1})
+        version_dir = tmp_path / "v1"
+        config_path = write_config(tmp_path / "v1.yml", cfg)
+        cut_main([str(config_path), str(version_dir), "--source-dir", str(archive)])
+        render_main([str(version_dir), "--converter", converter])
+
+        from sciencebeam_dataset_builder.archive_cut import publish_cli
+        from sciencebeam_dataset_builder.archive_cut.upload import LocalPublishTarget
+
+        recorded = LocalPublishTarget(repo)
+        original = publish_cli.build_target
+        publish_cli.build_target = lambda args, config: recorded
+        try:
+            publish_main([str(version_dir), "--target-dir", str(repo)])
+        finally:
+            publish_cli.build_target = original
+
+        data_commits = [
+            paths for paths, _ in recorded.commits if paths[0].endswith(".parquet")
+        ]
+        assert data_commits == [["test.parquet"], ["validation.parquet"]]
+
 
 class TestGrowingAPublishedVersion:
     def test_the_new_split_contains_the_old_one(self, tmp_path, converter):

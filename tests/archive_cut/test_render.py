@@ -1,8 +1,9 @@
 """Tests for archive_cut.render — every failure mode surfaces per document."""
 
-import os
 import stat
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -110,26 +111,31 @@ class TestRenderDocument:
         survivors interfere with every later conversion — which is how one slow document
         turns into one that times out however often it is retried.
         """
-        marker = tmp_path / "grandchild-alive"
-        # A wrapper that backgrounds a long-lived grandchild, as lowriter does, then
-        # waits. The grandchild keeps the marker present while it lives.
+        # A unique argument identifies the grandchild, so a reused pid cannot make this
+        # pass or fail by accident.
+        token = f"grandchild-{tmp_path.name}"
         wrapper = tmp_path / "fake-wrapper"
         wrapper.write_text(
-            "#!/bin/sh\n"
-            f"( touch {marker}; sleep 60; rm -f {marker} ) &\n"
-            "echo $! > " + str(tmp_path / "grandchild.pid") + "\n"
-            "sleep 60\n",
+            f"#!/bin/sh\nsh -c 'sleep 600 {token}' &\nsleep 600\n",
             encoding="utf-8",
         )
         wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
 
-        with pytest.raises(ValueError):
-            _render(str(wrapper), tmp_path, "alpha-000", timeout=2)
+        def grandchild_running() -> bool:
+            found = subprocess.run(
+                ["pgrep", "-f", token], capture_output=True, text=True, check=False
+            )
+            return found.returncode == 0
 
-        pid = int((tmp_path / "grandchild.pid").read_text().strip())
-        # Signal 0 only checks for existence.
-        with pytest.raises(OSError):
-            os.kill(pid, 0)
+        with pytest.raises(ValueError):
+            _render(str(wrapper), tmp_path, "alpha-000", timeout=3)
+
+        # The kill is asynchronous, so allow it a moment to take effect.
+        for _ in range(50):
+            if not grandchild_running():
+                break
+            time.sleep(0.1)
+        assert not grandchild_running(), "the grandchild survived the timeout"
 
     def test_a_missing_converter_raises_rather_than_failing_the_document(
         self, tmp_path
