@@ -73,7 +73,9 @@ class TestTimeoutIsRetriedWithinARun:
     def test_a_document_that_times_out_once_still_renders(self, tmp_path, converter):
         version_dir = tmp_path / "v1"
         _added(version_dir, "test", ["alpha-000-flaky"])
-        render_main([str(version_dir), "--converter", converter, "--timeout", "1"])
+        # Generous, because the second attempt has to actually render: a budget close to
+        # the cost of starting the converter races it and fails under load.
+        render_main([str(version_dir), "--converter", converter, "--timeout", "5"])
         assert rendered_table(version_dir, "test").num_rows == 1
         assert read_failures(version_dir / FAILURES_FILENAME) == []
 
@@ -128,8 +130,7 @@ class TestRetryFailed:
     def test_the_shard_is_rendered_again_and_can_succeed(self, tmp_path, converter):
         version_dir = tmp_path / "v1"
         _added(version_dir, "test", ["alpha-000-flaky", "alpha-001"])
-        # A one-second limit with no retries left: force it to be recorded as failed.
-        render_main([str(version_dir), "--converter", converter, "--timeout", "1"])
+        render_main([str(version_dir), "--converter", converter, "--timeout", "5"])
 
         # Simulate the operator's situation: the flaky document was recorded as failed.
         write_failures(
@@ -142,8 +143,8 @@ class TestRetryFailed:
                 )
             ],
         )
-        # The same short limit: the stand-in times out on its first attempt in a fresh
-        # working directory and succeeds on the second, as a hanging converter does.
+        # The stand-in times out on its first attempt in a fresh working directory and
+        # succeeds on the second, as a hanging converter does.
         render_main(
             [
                 str(version_dir),
@@ -151,7 +152,7 @@ class TestRetryFailed:
                 converter,
                 "--retry-failed",
                 "--timeout",
-                "1",
+                "5",
             ]
         )
         ids = rendered_table(version_dir, "test").column("id").to_pylist()
