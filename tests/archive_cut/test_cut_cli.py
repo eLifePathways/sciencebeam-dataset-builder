@@ -2,7 +2,6 @@
 
 import csv
 
-import pyarrow.parquet as pq
 import pytest
 
 from sciencebeam_dataset_builder.archive_cut.config import load_config
@@ -10,9 +9,11 @@ from sciencebeam_dataset_builder.archive_cut.cut_cli import main, parse_args
 from sciencebeam_dataset_builder.archive_cut.layout import version_name
 
 from tests.archive_cut._helpers import (
+    added_table,
     archive_config,
     document_bytes,
     paper_id,
+    stage_files,
     write_archive,
     write_config,
 )
@@ -76,8 +77,8 @@ class TestFirstCut:
 
         assert (output_dir / "sample-v001.csv").exists()
         assert (output_dir / "sample-v001.yml").exists()
-        assert (output_dir / "added" / "test.parquet").exists()
-        assert (output_dir / "added" / "validation.parquet").exists()
+        assert stage_files(output_dir, "added", "test")
+        assert stage_files(output_dir, "added", "validation")
 
     def test_the_manifest_records_every_selected_document(self, tmp_path):
         archive = tmp_path / "archive"
@@ -93,7 +94,7 @@ class TestFirstCut:
         write_archive(archive, {"alpha": 8})
         cfg = archive_config(splits=SPLITS, default={"test": 2, "validation": 0})
         output_dir = _cut(tmp_path, archive, cfg)
-        table = pq.read_table(output_dir / "added" / "test.parquet")
+        table = added_table(output_dir, "test")
         assert table.column("id").to_pylist() == [
             paper_id("alpha", 0),
             paper_id("alpha", 1),
@@ -108,7 +109,7 @@ class TestFirstCut:
         write_archive(archive, {"alpha": 8})
         cfg = archive_config(splits=SPLITS, default={"test": 2, "validation": 0})
         output_dir = _cut(tmp_path, archive, cfg)
-        assert not (output_dir / "added" / "validation.parquet").exists()
+        assert not stage_files(output_dir, "added", "validation")
 
     def test_a_local_archive_records_no_revision(self, tmp_path):
         archive = tmp_path / "archive"
@@ -137,7 +138,7 @@ class TestExtending:
             str(first / "sample-v001.csv"),
             output_name="v2",
         )
-        added = pq.read_table(second / "added" / "test.parquet")
+        added = added_table(second, "test")
         # Ranks 0 and 1 are already published; rank 2 belongs to validation, so test
         # grows past it into 3 and 4.
         assert added.column("id").to_pylist() == [

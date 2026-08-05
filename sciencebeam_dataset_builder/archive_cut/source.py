@@ -18,7 +18,7 @@ import dataclasses
 import json
 import logging
 import time
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -293,20 +293,17 @@ def iter_document_batches(
     source: ArchiveSource,
     selected: Mapping[str, SelectedShard],
     config: CorpusConfig,
-    on_progress: Callable[[str, int], None] | None = None,
-) -> Iterator[pa.Table]:
-    """Yield one table per shard, holding only the wanted rows of that shard.
+) -> Iterator[tuple[str, pa.Table]]:
+    """Yield (shard filename, its wanted rows), one shard at a time.
 
-    Per shard rather than one table for everything, so a caller can write as it reads:
-    single documents in this archive reach 100 MiB.
+    Per shard rather than one table for everything, so a caller can write as it reads --
+    single documents in this archive reach 100 MiB -- and so it can record each shard as
+    finished and resume from there.
     """
     for filename in sorted(selected):
         item = selected[filename]
         LOGGER.info("Reading %d document(s) from %s", len(item.rows), filename)
-        table = _read_shard_rows_with_retries(source, filename, item, config)
-        if on_progress is not None:
-            on_progress(filename, table.num_rows)
-        yield table
+        yield filename, _read_shard_rows_with_retries(source, filename, item, config)
 
 
 def _read_shard_rows_with_retries(

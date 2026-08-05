@@ -13,6 +13,7 @@ from sciencebeam_dataset_builder.archive_cut.layout import (
     FAILURES_FILENAME,
     RENDERED_DIRECTORY,
 )
+from tests.archive_cut._helpers import rendered_table, stage_files  # noqa: F401
 from sciencebeam_dataset_builder.archive_cut.render_cli import (
     CONVERTER_COLUMN,
     PDF_COLUMN,
@@ -34,8 +35,10 @@ def converter(tmp_path):
     return str(path)
 
 
-def _write_added(version_dir: Path, split: str, ids: list[str]) -> None:
-    added = version_dir / "added"
+def _write_added(
+    version_dir: Path, split: str, ids: list[str], shard: str = "alpha-00000"
+) -> None:
+    added = version_dir / "added" / split
     added.mkdir(parents=True, exist_ok=True)
     pq.write_table(
         pa.table(
@@ -47,7 +50,7 @@ def _write_added(version_dir: Path, split: str, ids: list[str]) -> None:
                 "xml": [f"<article>{i}</article>" for i in ids],
             }
         ),
-        added / f"{split}.parquet",
+        added / f"{shard}.parquet",
     )
 
 
@@ -57,7 +60,7 @@ class TestRendering:
         _write_added(version_dir, "test", ["alpha-000", "alpha-001"])
         main([str(version_dir), "--converter", converter])
 
-        table = pq.read_table(version_dir / RENDERED_DIRECTORY / "test.parquet")
+        table = rendered_table(version_dir, "test")
         assert table.num_rows == 2
         assert table.column(CONVERTER_COLUMN).to_pylist() == ["FakeConverter 1.2.3"] * 2
         assert all(
@@ -69,7 +72,7 @@ class TestRendering:
         _write_added(version_dir, "test", ["alpha-000"])
         main([str(version_dir), "--converter", converter])
 
-        table = pq.read_table(version_dir / RENDERED_DIRECTORY / "test.parquet")
+        table = rendered_table(version_dir, "test")
         assert table.column("doc").to_pylist() == [b"source:alpha-000"]
         assert table.column("xml").to_pylist() == ["<article>alpha-000</article>"]
 
@@ -79,8 +82,9 @@ class TestRendering:
         _write_added(version_dir, "validation", ["alpha-001"])
         main([str(version_dir), "--converter", converter])
         assert sorted(
-            p.name for p in (version_dir / RENDERED_DIRECTORY).glob("*.parquet")
-        ) == ["test.parquet", "validation.parquet"]
+            p.parent.name
+            for p in (version_dir / RENDERED_DIRECTORY).glob("*/*.parquet")
+        ) == ["test", "validation"]
 
     def test_a_version_that_added_nothing_is_not_an_error(
         self, tmp_path, converter, capsys
@@ -97,7 +101,7 @@ class TestFailures:
         _write_added(version_dir, "test", ["alpha-000", "alpha-001-fails", "alpha-002"])
         main([str(version_dir), "--converter", converter])
 
-        table = pq.read_table(version_dir / RENDERED_DIRECTORY / "test.parquet")
+        table = rendered_table(version_dir, "test")
         assert table.column("id").to_pylist() == ["alpha-000", "alpha-002"]
         failures = read_failures(version_dir / FAILURES_FILENAME)
         assert [f.id for f in failures] == ["alpha-001-fails"]
@@ -107,7 +111,7 @@ class TestFailures:
         version_dir = tmp_path / "v1"
         _write_added(version_dir, "test", ["alpha-000-empty", "alpha-001"])
         main([str(version_dir), "--converter", converter])
-        table = pq.read_table(version_dir / RENDERED_DIRECTORY / "test.parquet")
+        table = rendered_table(version_dir, "test")
         assert table.column("id").to_pylist() == ["alpha-001"]
         assert all(len(pdf) > 0 for pdf in table.column(PDF_COLUMN).to_pylist())
 
@@ -166,7 +170,7 @@ class TestFailures:
         version_dir = tmp_path / "v1"
         _write_added(version_dir, "test", ["alpha-000-fails"])
         main([str(version_dir), "--converter", converter])
-        table = pq.read_table(version_dir / RENDERED_DIRECTORY / "test.parquet")
+        table = rendered_table(version_dir, "test")
         assert table.num_rows == 0
         assert PDF_COLUMN in table.schema.names
 

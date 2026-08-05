@@ -191,3 +191,25 @@ def archive_config(
     data = config_to_dict(cfg)
     data["columns"] = ["id", "stratum", "doc", "doc_ext", "xml", "pdf"]
     return config_from_dict(data)
+
+
+def stage_files(version_dir: Path, stage: str, split: str) -> list[Path]:
+    """Every per-shard file a stage wrote for one split."""
+    directory = version_dir / stage / split
+    return sorted(directory.glob("*.parquet")) if directory.is_dir() else []
+
+
+def stage_table(version_dir: Path, stage: str, split: str) -> pa.Table:
+    """One split's rows, concatenated across the shards they were cut from."""
+    tables = [pq.read_table(path) for path in stage_files(version_dir, stage, split)]
+    if not tables:
+        raise AssertionError(f"no {stage}/{split} files under {version_dir}")
+    return pa.concat_tables(tables)
+
+
+def added_table(version_dir: Path, split: str) -> pa.Table:
+    return stage_table(version_dir, "added", split)
+
+
+def rendered_table(version_dir: Path, split: str) -> pa.Table:
+    return stage_table(version_dir, "rendered", split)

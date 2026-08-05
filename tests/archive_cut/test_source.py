@@ -171,7 +171,9 @@ class TestReadingDocuments:
         selected = shards_for(
             wanted, parse_shard_manifest(source.read_text("shards.jsonl"), config)
         )
-        tables = list(iter_document_batches(source, selected, config))
+        tables = [
+            table for _name, table in iter_document_batches(source, selected, config)
+        ]
         assert len(tables) == 1
         table = tables[0]
         assert table.column("id").to_pylist() == [
@@ -212,7 +214,7 @@ class TestReadingDocuments:
         selected = shards_for(
             wanted, parse_shard_manifest(source.read_text("shards.jsonl"), config)
         )
-        table = next(iter(iter_document_batches(source, selected, config)))
+        _name, table = next(iter(iter_document_batches(source, selected, config)))
         # 'pdf' is configured for the output but the archive has no such column: a
         # later step adds it.
         assert "pdf" in config.columns

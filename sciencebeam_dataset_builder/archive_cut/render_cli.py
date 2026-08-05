@@ -13,16 +13,25 @@ import logging
 import shutil
 import sys
 import tempfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+from tqdm import tqdm
 
 from sciencebeam_dataset_builder.archive_cut.layout import (
     ADDED_DIRECTORY,
     FAILURES_FILENAME,
     RENDERED_DIRECTORY,
+    completed_path,
+    files_by_split,
+    shard_output_path,
+)
+from sciencebeam_dataset_builder.archive_cut.progress import (
+    read_completed,
+    record_completed,
+    write_atomically,
 )
 from sciencebeam_dataset_builder.archive_cut.render import (
     DEFAULT_CONVERTER,
@@ -51,6 +60,20 @@ def read_failures(path: Path) -> list[RenderFailure]:
         ]
 
 
+def merge_failures(
+    existing: Sequence[RenderFailure], found: Sequence[RenderFailure]
+) -> list[RenderFailure]:
+    """Keep every failure ever recorded for this version, newest reason winning.
+
+    A resumed run only renders the shards it has left, so rewriting the file from what
+    this run saw would forget the failures of the shards it skipped.
+    """
+    merged = {failure.id: failure for failure in existing}
+    for failure in found:
+        merged[failure.id] = failure
+    return [merged[key] for key in sorted(merged)]
+
+
 def write_failures(path: Path, failures: Sequence[RenderFailure]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
@@ -70,6 +93,7 @@ def render_table(
     command: str = DEFAULT_CONVERTER,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     work_dir: Path | None = None,
+    on_progress: Callable[[int], object] | None = None,
 ) -> tuple[pa.Table, list[RenderFailure]]:
     """Return the table with a PDF per row, plus the rows that could not be rendered.
 
@@ -100,10 +124,14 @@ def render_table(
             except ValueError as exc:
                 LOGGER.warning("Failed to render %s: %s", document_id, exc)
                 failures.append(RenderFailure(id=document_id, reason=str(exc)))
+                if on_progress is not None:
+                    on_progress(1)
                 continue
             LOGGER.debug("Rendered %s (%d page(s))", document_id, rendered.pages)
             keep.append(index)
             pdfs.append(rendered.pdf)
+            if on_progress is not None:
+                on_progress(1)
 
     # Typed explicitly: an empty Python list infers as null, which take() cannot use,
     # and every document of a split failing to render is a case that must still work.
@@ -140,10 +168,6 @@ class _WorkDir:
     def __exit__(self, *exc_info: object) -> None:
         if self._temporary is not None:
             shutil.rmtree(self._temporary, ignore_errors=True)
-
-
-def split_files(directory: Path) -> Iterator[Path]:
-    yield from sorted(directory.glob("*.parquet"))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -198,52 +222,93 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _run(args: argparse.Namespace) -> None:
-    added_dir = args.version_dir / ADDED_DIRECTORY
-    if not added_dir.is_dir():
+    added = files_by_split(args.version_dir, ADDED_DIRECTORY)
+    if not added:
         # A version that added nothing is legitimate — a rerun of an unchanged config.
-        print(f"No {ADDED_DIRECTORY}/ in {args.version_dir}: nothing to render")
+        print(
+            f"Nothing in {ADDED_DIRECTORY}/ under {args.version_dir}: nothing to render"
+        )
         return
 
     version = converter_version(args.converter)
     LOGGER.info("Converter: %s", version)
 
-    rendered_dir = args.version_dir / RENDERED_DIRECTORY
+    completed_file = completed_path(args.version_dir, RENDERED_DIRECTORY)
+    completed = read_completed(completed_file)
+    failures_path = args.version_dir / FAILURES_FILENAME
     all_failures: list[RenderFailure] = []
     rendered_counts: dict[str, int] = {}
+    for rows in completed.values():
+        for split, count in rows.items():
+            rendered_counts[split] = rendered_counts.get(split, 0) + count
 
-    for source_path in split_files(added_dir):
-        table = pq.read_table(source_path)
-        LOGGER.info(
-            "Rendering %d document(s) from %s", table.num_rows, source_path.name
-        )
-        rendered, failures = render_table(
-            table,
-            version,
-            command=args.converter,
-            timeout=args.timeout,
-            work_dir=args.work_dir,
-        )
-        if failures and args.on_failure == "abort":
-            raise RenderError(
-                f"{len(failures)} document(s) failed to render, first "
-                f"{failures[0].id!r}: {failures[0].reason}"
+    todo = [
+        (split, path)
+        for split, paths in sorted(added.items())
+        for path in paths
+        if f"{split}/{path.name}" not in completed
+    ]
+    if completed:
+        LOGGER.info("Resuming: %d shard file(s) already rendered", len(completed))
+
+    total = sum(pq.read_metadata(path).num_rows for _, path in todo)
+    progress = tqdm(total=total, unit="doc", desc="Rendering")
+    try:
+        for split, source_path in todo:
+            table = pq.read_table(source_path)
+            rendered, failures = render_table(
+                table,
+                version,
+                command=args.converter,
+                timeout=args.timeout,
+                work_dir=args.work_dir,
+                on_progress=progress.update,
             )
-        all_failures.extend(failures)
-        rendered_dir.mkdir(parents=True, exist_ok=True)
-        pq.write_table(rendered, rendered_dir / source_path.name, compression="zstd")
-        rendered_counts[source_path.stem] = rendered.num_rows
+            if failures and args.on_failure == "abort":
+                raise RenderError(
+                    f"{len(failures)} document(s) failed to render, first "
+                    f"{failures[0].id!r}: {failures[0].reason}"
+                )
+            target = shard_output_path(
+                args.version_dir, RENDERED_DIRECTORY, split, source_path.name
+            )
+            write_atomically(
+                target,
+                _parquet_writer(rendered),
+            )
+            # Recorded only once the file is closed and renamed, and the failures are
+            # persisted first so a crash cannot lose them while claiming the shard done.
+            all_failures.extend(failures)
+            write_failures(
+                failures_path,
+                merge_failures(read_failures(failures_path), failures),
+            )
+            record_completed(
+                completed_file,
+                f"{split}/{source_path.name}",
+                {split: rendered.num_rows},
+            )
+            rendered_counts[split] = rendered_counts.get(split, 0) + rendered.num_rows
+    finally:
+        progress.close()
 
-    write_failures(args.version_dir / FAILURES_FILENAME, all_failures)
-
+    recorded = read_failures(failures_path)
     for split, count in sorted(rendered_counts.items()):
         print(f"{split}: {count} document(s) rendered")
-    if all_failures:
-        print(f"{len(all_failures)} document(s) failed to render:")
-        for failure in all_failures:
+    if recorded:
+        print(f"{len(recorded)} document(s) failed to render:")
+        for failure in recorded:
             print(f"  {failure.id}: {failure.reason}")
         print(f"Listed in {FAILURES_FILENAME}, to be excluded when publishing")
     else:
         print("No rendering failures")
+
+
+def _parquet_writer(table: pa.Table) -> "Callable[[Path], None]":
+    def write(target: Path) -> None:
+        pq.write_table(table, target, compression="zstd")
+
+    return write
 
 
 if __name__ == "__main__":

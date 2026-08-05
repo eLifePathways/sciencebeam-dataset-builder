@@ -8,14 +8,20 @@ was also what coupled them to each other.
 
 import re
 from collections.abc import Iterable
+from pathlib import Path
 
 from sciencebeam_dataset_builder.archive_cut.config import CorpusConfig
 
-# Within a local version directory.
+# Within a local version directory. Documents are held one file per (split, shard)
+# rather than one per split, so that a run interrupted part way keeps the shards it
+# finished: reading a shard costs real bytes and rendering one costs real minutes.
 ADDED_DIRECTORY = "added"
 RENDERED_DIRECTORY = "rendered"
 PUBLISHED_DIRECTORY = "published"
 FAILURES_FILENAME = "render-failures.csv"
+# Appended only once a shard's files are written and closed, so it never records work
+# that is not on disk -- the same discipline the archive build used to be resumable.
+COMPLETED_FILENAME = "completed.jsonl"
 
 # Within the published repo.
 SPLITS_DIRECTORY = "splits"
@@ -66,3 +72,37 @@ def published_versions(files: Iterable[str], name: str) -> list[int]:
 def latest_published_version(files: Iterable[str], name: str) -> int | None:
     versions = published_versions(files, name)
     return versions[-1] if versions else None
+
+
+def shard_stem(shard_filename: str) -> str:
+    """A shard's name without its extension, used to name the files cut from it."""
+    return Path(shard_filename).stem
+
+
+def split_directory(version_dir: Path, stage: str, split: str) -> Path:
+    return version_dir / stage / split
+
+
+def shard_output_path(
+    version_dir: Path, stage: str, split: str, shard_filename: str
+) -> Path:
+    return (
+        split_directory(version_dir, stage, split)
+        / f"{shard_stem(shard_filename)}.parquet"
+    )
+
+
+def files_by_split(version_dir: Path, stage: str) -> dict[str, list[Path]]:
+    """Every written file, grouped by the split whose directory it sits in."""
+    root = version_dir / stage
+    if not root.is_dir():
+        return {}
+    return {
+        directory.name: sorted(directory.glob("*.parquet"))
+        for directory in sorted(root.iterdir())
+        if directory.is_dir() and any(directory.glob("*.parquet"))
+    }
+
+
+def completed_path(version_dir: Path, stage: str) -> Path:
+    return version_dir / stage / COMPLETED_FILENAME

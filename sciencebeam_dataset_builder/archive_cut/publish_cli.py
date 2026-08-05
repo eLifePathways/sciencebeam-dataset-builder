@@ -10,6 +10,7 @@ import argparse
 import logging
 import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 
 import pyarrow as pa
@@ -26,6 +27,7 @@ from sciencebeam_dataset_builder.archive_cut.layout import (
     PUBLISHED_DIRECTORY,
     RENDERED_DIRECTORY,
     SPLITS_DIRECTORY,
+    files_by_split,
     config_path_in_repo,
     manifest_path_in_repo,
     split_path_in_repo,
@@ -77,18 +79,19 @@ def find_version_files(version_dir: Path) -> tuple[Path, Path]:
 def prepare_splits(
     config: CorpusConfig,
     rows: list[ManifestRow],
-    rendered_dir: Path,
+    version_dir: Path,
     target: PublishTarget,
     work_dir: Path,
 ) -> list[PreparedSplit]:
     """Merge each split's new rows with those already published."""
+    rendered = files_by_split(version_dir, RENDERED_DIRECTORY)
     prepared: list[PreparedSplit] = []
     for split in config.splits:
         wanted = [row for row in rows if row.split == split]
         if not wanted:
             LOGGER.info("Split %r has no documents; nothing to publish for it", split)
             continue
-        added = _read_if_present(rendered_dir / f"{split}.parquet")
+        added = _read_shard_files(rendered.get(split, []))
         previous = _fetch_previous(target, split, work_dir)
         if previous is None and added is None:
             raise PublishError(
@@ -99,6 +102,17 @@ def prepare_splits(
         check_output_schema(split, table, config)
         prepared.append(PreparedSplit(split=split, table=table))
     return prepared
+
+
+def _read_shard_files(paths: Sequence[Path]) -> pa.Table | None:
+    """Concatenate this version's per-shard files for one split.
+
+    The cut and the renderer write one file per shard so an interrupted run resumes;
+    publishing is where they become the single file per split that readers name.
+    """
+    tables = [pq.read_table(path) for path in paths]
+    non_empty = [table for table in tables if table.num_rows]
+    return pa.concat_tables(non_empty) if non_empty else None
 
 
 def _read_if_present(path: Path) -> pa.Table | None:
@@ -261,7 +275,7 @@ def _run(args: argparse.Namespace) -> None:
         prepared = prepare_splits(
             config=config,
             rows=kept,
-            rendered_dir=args.version_dir / RENDERED_DIRECTORY,
+            version_dir=args.version_dir,
             target=target,
             work_dir=Path(work),
         )

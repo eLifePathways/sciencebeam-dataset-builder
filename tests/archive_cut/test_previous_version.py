@@ -21,8 +21,10 @@ from sciencebeam_dataset_builder.archive_cut.publish_cli import main as publish_
 from sciencebeam_dataset_builder.archive_cut.render_cli import main as render_main
 
 from tests.archive_cut._helpers import (
+    added_table,
     archive_config,
     paper_id,
+    stage_files,
     write_archive,
     write_config,
 )
@@ -81,7 +83,7 @@ class TestDiscoveringThePreviousVersion:
         )
         published = pq.read_table(repo / "test.parquet").column("id").to_pylist()
         assert published == [paper_id("alpha", i) for i in range(4)]
-        assert (second / "added" / "test.parquet").exists()
+        assert stage_files(second, "added", "test")
 
     def test_only_the_new_documents_are_read(self, tmp_path, converter):
         archive = tmp_path / "archive"
@@ -97,7 +99,7 @@ class TestDiscoveringThePreviousVersion:
             "v2",
             extra=["--previous-dir", str(repo)],
         )
-        added = pq.read_table(second / "added" / "test.parquet")
+        added = added_table(second, "test")
         assert added.column("id").to_pylist() == [
             paper_id("alpha", 2),
             paper_id("alpha", 3),
@@ -131,7 +133,7 @@ class TestDiscoveringThePreviousVersion:
                 "1",
             ]
         )
-        added = pq.read_table(third / "added" / "test.parquet")
+        added = added_table(third, "test")
         assert len(added) == 3
 
     def test_an_empty_repo_is_treated_as_a_first_cut(self, tmp_path, converter, capsys):
@@ -169,7 +171,7 @@ class TestDiscoveringThePreviousVersion:
                 str(repo),
             ]
         )
-        assert len(pq.read_table(second / "added" / "test.parquet")) == 2
+        assert len(added_table(second, "test")) == 2
 
 
 class TestGuardsAgainstSilentlyBreakingNesting:

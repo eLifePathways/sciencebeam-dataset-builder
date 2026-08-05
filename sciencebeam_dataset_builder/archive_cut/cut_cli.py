@@ -16,7 +16,6 @@ import sys
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -37,10 +36,17 @@ from sciencebeam_dataset_builder.archive_cut.config import (
 )
 from sciencebeam_dataset_builder.archive_cut.layout import (
     ADDED_DIRECTORY,
+    completed_path,
     config_path_in_repo,
     latest_published_version,
     manifest_path_in_repo,
+    shard_output_path,
     version_name,
+)
+from sciencebeam_dataset_builder.archive_cut.progress import (
+    read_completed,
+    record_completed,
+    write_atomically,
 )
 from sciencebeam_dataset_builder.archive_cut.manifest import (
     ManifestRow,
@@ -87,49 +93,59 @@ def write_added_documents(
     split_of_id: Mapping[str, str],
     output_dir: Path,
 ) -> dict[str, int]:
-    """Write this version's new documents, one file per split. Returns rows per split."""
-    added_dir = output_dir / ADDED_DIRECTORY
-    writers: dict[str, pq.ParquetWriter] = {}
+    """Write this version's new documents, one file per split and shard.
+
+    Resumable: a shard already recorded as finished is skipped, so an interrupted run
+    keeps what it fetched rather than paying for it twice.
+    """
+    completed_file = completed_path(output_dir, ADDED_DIRECTORY)
+    completed = read_completed(completed_file)
+    remaining = {
+        filename: item
+        for filename, item in selected.items()
+        if filename not in completed
+    }
     written: dict[str, int] = {}
+    for rows in completed.values():
+        for split, count in rows.items():
+            written[split] = written.get(split, 0) + count
+    if completed:
+        LOGGER.info(
+            "Resuming: %d of %d shard(s) already read, %d document(s) already written",
+            len(completed),
+            len(selected),
+            sum(written.values()),
+        )
+
     total = sum(len(item.rows) for item in selected.values())
-    # A shard can take minutes over ranged reads, so the count of documents is the only
-    # honest measure of progress; the request log is not one.
-    progress = tqdm(total=total, unit="doc", desc="Reading documents")
+    already = sum(len(selected[name].rows) for name in completed if name in selected)
+    # A shard can take minutes over ranged reads, so documents are the only honest
+    # measure of progress; the request log is not one.
+    progress = tqdm(total=total, initial=already, unit="doc", desc="Reading documents")
     try:
-        for table in iter_document_batches(
-            source,
-            selected,
-            config,
-            on_progress=_progress_update(progress),
-        ):
+        for filename, table in iter_document_batches(source, remaining, config):
+            rows_here: dict[str, int] = {}
             for split, subset in _by_split(table, config.id_column, split_of_id):
-                if split not in writers:
-                    # Created here rather than up front, so a version that adds nothing
-                    # leaves no empty directory suggesting it did.
-                    added_dir.mkdir(parents=True, exist_ok=True)
-                    # zstd because the archive's own measurements settled on it; the
-                    # published files' compression is the publishing step's choice.
-                    writers[split] = pq.ParquetWriter(
-                        added_dir / f"{split}.parquet",
-                        subset.schema,
-                        compression="zstd",
-                    )
-                writers[split].write_table(subset)
+                path = shard_output_path(output_dir, ADDED_DIRECTORY, split, filename)
+                write_atomically(path, _parquet_writer(subset))
+                rows_here[split] = subset.num_rows
                 written[split] = written.get(split, 0) + subset.num_rows
+            # Only now, with every file for this shard closed and renamed.
+            record_completed(completed_file, filename, rows_here)
+            progress.update(table.num_rows)
     finally:
         progress.close()
-        for writer in writers.values():
-            writer.close()
     return written
 
 
-def _progress_update(progress: Any) -> Callable[[str, int], None]:
-    """tqdm.update returns a bool, which the callback type does not want."""
+def _parquet_writer(table: pa.Table) -> Callable[[Path], None]:
+    """zstd because the archive's own measurements settled on it; the published files'
+    compression is the publishing step's choice."""
 
-    def update(_filename: str, rows: int) -> None:
-        progress.update(rows)
+    def write(target: Path) -> None:
+        pq.write_table(table, target, compression="zstd")
 
-    return update
+    return write
 
 
 def _by_split(
