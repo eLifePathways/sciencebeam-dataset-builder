@@ -1,5 +1,6 @@
 """Tests for archive_cut.render — every failure mode surfaces per document."""
 
+import os
 import stat
 import sys
 from pathlib import Path
@@ -101,6 +102,34 @@ class TestRenderDocument:
         with pytest.raises(ValueError) as exc_info:
             _render(converter, tmp_path, "alpha-000-hangs", timeout=1)
         assert "timed out" in str(exc_info.value)
+
+    def test_a_timeout_kills_the_grandchild_too(self, tmp_path):
+        """`lowriter` starts soffice.bin as a grandchild.
+
+        Killing only the direct child leaves the real converter running, and those
+        survivors interfere with every later conversion — which is how one slow document
+        turns into one that times out however often it is retried.
+        """
+        marker = tmp_path / "grandchild-alive"
+        # A wrapper that backgrounds a long-lived grandchild, as lowriter does, then
+        # waits. The grandchild keeps the marker present while it lives.
+        wrapper = tmp_path / "fake-wrapper"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            f"( touch {marker}; sleep 60; rm -f {marker} ) &\n"
+            "echo $! > " + str(tmp_path / "grandchild.pid") + "\n"
+            "sleep 60\n",
+            encoding="utf-8",
+        )
+        wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
+
+        with pytest.raises(ValueError):
+            _render(str(wrapper), tmp_path, "alpha-000", timeout=2)
+
+        pid = int((tmp_path / "grandchild.pid").read_text().strip())
+        # Signal 0 only checks for existence.
+        with pytest.raises(OSError):
+            os.kill(pid, 0)
 
     def test_a_missing_converter_raises_rather_than_failing_the_document(
         self, tmp_path

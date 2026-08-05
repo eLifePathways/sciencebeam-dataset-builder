@@ -17,7 +17,9 @@ rather than part of the cut: the cut stays pure pyarrow and its tests need no su
 import dataclasses
 import io
 import logging
+import os
 import re
+import signal
 import subprocess
 from pathlib import Path
 
@@ -102,6 +104,47 @@ def pdf_page_count(pdf: bytes) -> int:
         raise ValueError(f"not a readable PDF: {exc}") from exc
 
 
+def _run_converter(argv: list[str], command: str, timeout: int) -> tuple[int, str]:
+    """Run the converter, killing its whole process group if it overruns.
+
+    `lowriter` is a wrapper that starts `soffice.bin` as a *grandchild*, so killing only
+    the direct child on timeout leaves the real converter running. Those survivors then
+    interfere with every later conversion, which is how one slow document turns into a
+    document that appears to time out however often it is retried. The child therefore
+    gets its own session and the whole group is killed.
+    """
+    try:
+        process = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    except FileNotFoundError as exc:
+        raise RenderError(f"converter {command!r} not found") from exc
+
+    try:
+        output, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        _kill_process_group(process)
+        # Reap it, so the run does not accumulate zombies over hundreds of documents.
+        try:
+            process.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            LOGGER.warning("Converter process %d did not exit after kill", process.pid)
+        raise RenderTimeout(f"converter timed out after {timeout}s") from exc
+    return process.returncode, output or ""
+
+
+def _kill_process_group(process: "subprocess.Popen[str]") -> None:
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        # Already gone, or not ours to signal; killing the child alone is the fallback.
+        process.kill()
+
+
 def render_document(
     document: bytes,
     document_id: str,
@@ -124,33 +167,28 @@ def render_document(
     # against a profile already in use, which makes a shared one a source of
     # intermittent failures that look like document problems.
     profile_dir = work_dir / "profile"
-    try:
-        completed = subprocess.run(
-            [
-                command,
-                "--headless",
-                f"-env:UserInstallation=file://{profile_dir}",
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                str(output_dir),
-                str(source_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except FileNotFoundError as exc:
-        raise RenderError(f"converter {command!r} not found") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RenderTimeout(f"converter timed out after {timeout}s") from exc
+    returncode, output = _run_converter(
+        [
+            command,
+            "--headless",
+            # Skip the document-recovery prompt, which a previously killed run can
+            # otherwise leave waiting for an answer that never comes.
+            "--norestore",
+            f"-env:UserInstallation=file://{profile_dir}",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(output_dir),
+            str(source_path),
+        ],
+        command=command,
+        timeout=timeout,
+    )
 
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "").strip().splitlines()
+    if returncode != 0:
+        detail = output.strip().splitlines()
         raise ValueError(
-            f"converter exited {completed.returncode}"
-            + (f": {detail[-1]}" if detail else "")
+            f"converter exited {returncode}" + (f": {detail[-1]}" if detail else "")
         )
 
     rendered_path = output_dir / f"{stem}.pdf"
