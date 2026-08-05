@@ -123,7 +123,9 @@ def write_added_documents(
     # measure of progress; the request log is not one.
     progress = tqdm(total=total, initial=already, unit="doc", desc="Reading documents")
     try:
-        for filename, table in iter_document_batches(source, remaining, config):
+        for filename, table in iter_document_batches(
+            source, remaining, config, on_rows=progress.update
+        ):
             rows_here: dict[str, int] = {}
             for split, subset in _by_split(table, config.id_column, split_of_id):
                 path = shard_output_path(output_dir, ADDED_DIRECTORY, split, filename)
@@ -132,7 +134,6 @@ def write_added_documents(
                 written[split] = written.get(split, 0) + subset.num_rows
             # Only now, with every file for this shard closed and renamed.
             record_completed(completed_file, filename, rows_here)
-            progress.update(table.num_rows)
     finally:
         progress.close()
     return written

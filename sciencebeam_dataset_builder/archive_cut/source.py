@@ -18,7 +18,7 @@ import dataclasses
 import json
 import logging
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -293,17 +293,26 @@ def iter_document_batches(
     source: ArchiveSource,
     selected: Mapping[str, SelectedShard],
     config: CorpusConfig,
+    on_rows: Callable[[int], object] | None = None,
 ) -> Iterator[tuple[str, pa.Table]]:
     """Yield (shard filename, its wanted rows), one shard at a time.
 
     Per shard rather than one table for everything, so a caller can write as it reads --
     single documents in this archive reach 100 MiB -- and so it can record each shard as
     finished and resume from there.
+
+    `on_rows` is called with the documents obtained so far *within* a shard, because a
+    shard can take minutes and reporting only on its completion looks like a hang.
     """
     for filename in sorted(selected):
         item = selected[filename]
         LOGGER.info("Reading %d document(s) from %s", len(item.rows), filename)
-        yield filename, _read_shard_rows_with_retries(source, filename, item, config)
+        yield (
+            filename,
+            _read_shard_rows_with_retries(
+                source, filename, item, config, on_rows=on_rows
+            ),
+        )
 
 
 def _read_shard_rows_with_retries(
@@ -312,6 +321,7 @@ def _read_shard_rows_with_retries(
     selected: SelectedShard,
     config: CorpusConfig,
     attempts: int = READ_ATTEMPTS,
+    on_rows: Callable[[int], object] | None = None,
 ) -> pa.Table:
     """Read one shard, reopening it on failure.
 
@@ -322,7 +332,7 @@ def _read_shard_rows_with_retries(
     """
     for attempt in range(1, attempts + 1):
         try:
-            return _read_shard_rows(source, filename, selected, config)
+            return _read_shard_rows(source, filename, selected, config, on_rows=on_rows)
         except SourceError:
             raise
         except Exception as exc:  # noqa: BLE001 — anything transport-shaped is retried
@@ -351,6 +361,7 @@ def _read_shard_rows(
     filename: str,
     selected: SelectedShard,
     config: CorpusConfig,
+    on_rows: Callable[[int], object] | None = None,
 ) -> pa.Table:
     parquet_file = source.open_parquet(filename)
     id_column = config.id_column
@@ -360,19 +371,45 @@ def _read_shard_rows(
     wanted_indices = _locate_rows(parquet_file, filename, selected, id_column)
     group_indices = _row_groups_for_rows(parquet_file, wanted_indices)
     LOGGER.debug(
-        "%s: %d of %d row group(s) hold the %d wanted row(s)",
+        "%s: %d of %d row group(s) hold the %d wanted row(s), fetching %s",
         filename,
         len(group_indices),
         parquet_file.num_row_groups,
         len(wanted_indices),
-    )
-    LOGGER.debug(
-        "%s: fetching %s from %d row group(s)",
-        filename,
         _format_bytes(_compressed_bytes(parquet_file, group_indices, columns)),
-        len(group_indices),
     )
-    table = parquet_file.read_row_groups(group_indices, columns=list(columns))
+
+    # A group at a time rather than all of them at once: it reports progress every few
+    # seconds instead of once per shard, and keeps peak memory to one group rather than
+    # the whole selection, which matters where single documents reach 100 MiB.
+    wanted_ids = {row.id for row in wanted}
+    parts: list[pa.Table] = []
+    obtained = 0
+    for position, group in enumerate(group_indices, start=1):
+        part = parquet_file.read_row_groups([group], columns=list(columns))
+        keep = [
+            index
+            for index, value in enumerate(part.column(id_column).to_pylist())
+            if str(value) in wanted_ids
+        ]
+        if keep:
+            parts.append(part.take(pa.array(keep, type=pa.int64())))
+            obtained += len(keep)
+            if on_rows is not None:
+                on_rows(len(keep))
+        LOGGER.info(
+            "%s: row group %d/%d, %d/%d document(s)",
+            filename,
+            position,
+            len(group_indices),
+            obtained,
+            len(wanted),
+        )
+    table = (
+        pa.concat_tables(parts)
+        if parts
+        else parquet_file.read_row_groups([], columns=list(columns))
+    )
     return _select_ids_in_order(table, id_column, [row.id for row in wanted])
 
 

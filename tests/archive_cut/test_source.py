@@ -159,6 +159,45 @@ class TestRowGroupSelection:
         assert _row_groups_for_rows(parquet_file, [7]) == [3]
 
 
+class TestProgressWithinAShard:
+    def test_progress_is_reported_per_row_group_not_per_shard(self, tmp_path):
+        """A shard can take minutes, so reporting only on its completion looks like a hang."""
+        write_archive(tmp_path, {"alpha": 8}, rows_per_shard=8, rows_per_row_group=2)
+        source = LocalArchiveSource(tmp_path)
+        config = _config()
+        wanted = [
+            MetadataRow(id=paper_id("alpha", rank), stratum="alpha", rank=rank)
+            for rank in (0, 2, 4, 6)
+        ]
+        selected = shards_for(
+            wanted, parse_shard_manifest(source.read_text("shards.jsonl"), config)
+        )
+        reported: list[int] = []
+        list(iter_document_batches(source, selected, config, on_rows=reported.append))
+        # One document in each of four row groups, so four reports from one shard.
+        assert reported == [1, 1, 1, 1]
+
+    def test_the_reported_total_matches_the_documents_returned(self, tmp_path):
+        write_archive(tmp_path, {"alpha": 8}, rows_per_shard=4, rows_per_row_group=2)
+        source = LocalArchiveSource(tmp_path)
+        config = _config()
+        wanted = [
+            MetadataRow(id=paper_id("alpha", rank), stratum="alpha", rank=rank)
+            for rank in (0, 1, 5)
+        ]
+        selected = shards_for(
+            wanted, parse_shard_manifest(source.read_text("shards.jsonl"), config)
+        )
+        reported: list[int] = []
+        tables = [
+            table
+            for _name, table in iter_document_batches(
+                source, selected, config, on_rows=reported.append
+            )
+        ]
+        assert sum(reported) == sum(table.num_rows for table in tables) == 3
+
+
 class TestReadingDocuments:
     def test_the_wanted_rows_are_returned_with_their_content(self, tmp_path):
         write_archive(tmp_path, {"alpha": 8}, rows_per_shard=8, rows_per_row_group=2)
