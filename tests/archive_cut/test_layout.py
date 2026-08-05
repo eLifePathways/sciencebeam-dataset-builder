@@ -4,8 +4,9 @@ from sciencebeam_dataset_builder.archive_cut.layout import (
     config_path_in_repo,
     latest_published_version,
     manifest_path_in_repo,
+    published_split_paths,
     published_versions,
-    split_path_in_repo,
+    split_partition_path_in_repo,
     version_name,
     version_stem,
 )
@@ -39,8 +40,31 @@ class TestVersionNaming:
 
 
 class TestRepoPaths:
-    def test_a_split_is_one_file_at_the_repo_root(self):
-        assert split_path_in_repo("test") == "test.parquet"
+    def test_a_split_is_partitioned_by_stratum(self):
+        assert split_partition_path_in_repo("test", "pbio") == "test/pbio.parquet"
+
+    def test_a_stratum_that_cannot_name_a_file_is_rejected(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            split_partition_path_in_repo("test", "a/b")
+
+    def test_a_splits_published_files_are_found_across_partitions(self):
+        files = [
+            "test/pbio.parquet",
+            "test/pcbi.parquet",
+            "validation/pbio.parquet",
+            "splits/sample-v001.csv",
+            "README.md",
+        ]
+        assert published_split_paths(files, "test") == [
+            "test/pbio.parquet",
+            "test/pcbi.parquet",
+        ]
+        assert published_split_paths(files, "validation") == ["validation/pbio.parquet"]
+
+    def test_a_split_with_nothing_published_finds_nothing(self):
+        assert published_split_paths(["splits/sample-v001.csv"], "test") == []
 
     def test_the_manifest_and_config_sit_under_splits(self):
         assert manifest_path_in_repo("sample", 2) == "splits/sample-v002.csv"

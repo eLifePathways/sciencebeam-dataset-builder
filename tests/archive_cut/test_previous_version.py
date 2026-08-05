@@ -9,7 +9,6 @@ import stat
 import sys
 from pathlib import Path
 
-import pyarrow.parquet as pq
 import pytest
 
 from sciencebeam_dataset_builder.archive_cut.config import (
@@ -23,6 +22,7 @@ from sciencebeam_dataset_builder.archive_cut.render_cli import main as render_ma
 from tests.archive_cut._helpers import (
     added_table,
     archive_config,
+    published_table,
     paper_id,
     stage_files,
     write_archive,
@@ -81,7 +81,7 @@ class TestDiscoveringThePreviousVersion:
             "v2",
             extra=["--previous-dir", str(repo)],
         )
-        published = pq.read_table(repo / "test.parquet").column("id").to_pylist()
+        published = published_table(repo, "test").column("id").to_pylist()
         assert published == [paper_id("alpha", i) for i in range(4)]
         assert stage_files(second, "added", "test")
 

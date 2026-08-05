@@ -30,8 +30,12 @@ from sciencebeam_dataset_builder.archive_cut.layout import (
     files_by_split,
     config_path_in_repo,
     manifest_path_in_repo,
-    split_path_in_repo,
+    published_split_paths,
+    split_partition_path_in_repo,
     version_name,
+)
+from sciencebeam_dataset_builder.archive_cut.parquet_io import (
+    write_table_with_byte_sized_row_groups,
 )
 from sciencebeam_dataset_builder.archive_cut.manifest import (
     ManifestRow,
@@ -91,6 +95,7 @@ def prepare_splits(
 ) -> list[PreparedSplit]:
     """Merge each split's new rows with those already published."""
     rendered = files_by_split(version_dir, RENDERED_DIRECTORY)
+    published = target.list_files()
     prepared: list[PreparedSplit] = []
     for split in config.splits:
         wanted = [row for row in rows if row.split == split]
@@ -98,7 +103,7 @@ def prepare_splits(
             LOGGER.info("Split %r has no documents; nothing to publish for it", split)
             continue
         added = _read_shard_files(rendered.get(split, []))
-        previous = _fetch_previous(target, split, work_dir)
+        previous = _fetch_previous(target, split, work_dir, published)
         if previous is None and added is None:
             raise PublishError(
                 f"split {split!r} lists {len(wanted)} document(s) but neither new nor "
@@ -108,6 +113,17 @@ def prepare_splits(
         check_output_schema(split, table, config)
         prepared.append(PreparedSplit(split=split, table=table))
     return prepared
+
+
+def _by_stratum(table: pa.Table, stratum_column: str) -> list[tuple[str, pa.Table]]:
+    """Split a table by stratum, keeping each stratum's row order."""
+    indices: dict[str, list[int]] = {}
+    for index, value in enumerate(table.column(stratum_column).to_pylist()):
+        indices.setdefault(str(value), []).append(index)
+    return [
+        (stratum, table.take(pa.array(rows, type=pa.int64())))
+        for stratum, rows in sorted(indices.items())
+    ]
 
 
 def _read_shard_files(paths: Sequence[Path]) -> pa.Table | None:
@@ -129,13 +145,17 @@ def _read_if_present(path: Path) -> pa.Table | None:
 
 
 def _fetch_previous(
-    target: PublishTarget, split: str, work_dir: Path
+    target: PublishTarget, split: str, work_dir: Path, published: Sequence[str]
 ) -> pa.Table | None:
-    fetched = target.fetch(split_path_in_repo(split), work_dir)
-    if fetched is None:
+    """Retrieve every already-published file for one split, partitioned as they are."""
+    paths = published_split_paths(published, split)
+    if not paths:
         return None
-    LOGGER.info("Carrying forward already-published rows for split %r", split)
-    return _read_if_present(fetched)
+    LOGGER.info(
+        "Carrying forward %d already-published file(s) for split %r", len(paths), split
+    )
+    fetched = [target.fetch(path, work_dir) for path in paths]
+    return _read_shard_files([p for p in fetched if p is not None])
 
 
 def write_published(
@@ -148,11 +168,17 @@ def write_published(
     output_dir.mkdir(parents=True, exist_ok=True)
     files: list[FileToPublish] = []
     for item in prepared:
-        path = output_dir / split_path_in_repo(item.split)
-        pq.write_table(item.table, path, compression="zstd")
-        files.append(
-            FileToPublish(local_path=path, path_in_repo=split_path_in_repo(item.split))
-        )
+        for stratum, subset in _by_stratum(item.table, config.stratum_column):
+            path_in_repo = split_partition_path_in_repo(item.split, stratum)
+            path = output_dir / path_in_repo
+            groups = write_table_with_byte_sized_row_groups(subset, path)
+            LOGGER.info(
+                "%s: %d document(s) in %d row group(s)",
+                path_in_repo,
+                subset.num_rows,
+                groups,
+            )
+            files.append(FileToPublish(local_path=path, path_in_repo=path_in_repo))
 
     splits_dir = output_dir / SPLITS_DIRECTORY
     manifest_path = splits_dir / f"{version_name(config)}.csv"

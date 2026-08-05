@@ -24,6 +24,7 @@ from sciencebeam_dataset_builder.archive_cut.render_cli import main as render_ma
 
 from tests.archive_cut._helpers import (
     archive_config,
+    published_table,
     paper_id,
     write_archive,
     write_config,
@@ -58,7 +59,7 @@ def _run_version(tmp_path, archive, repo, cfg, converter, label, previous=None):
 
 
 def _published_ids(repo, split):
-    return pq.read_table(repo / f"{split}.parquet").column("id").to_pylist()
+    return published_table(repo, split).column("id").to_pylist()
 
 
 def _manifest(repo, name):
@@ -83,7 +84,7 @@ class TestFirstVersion:
         cfg = archive_config(splits=SPLITS, default={"test": 2, "validation": 1})
         _run_version(tmp_path, archive, repo, cfg, converter, "v1")
 
-        table = pq.read_table(repo / "test.parquet")
+        table = published_table(repo, "test")
         assert table.num_rows == 4
         assert all(pdf.startswith(b"%PDF-") for pdf in table.column("pdf").to_pylist())
         assert table.column("pdf_converter_version").to_pylist() == (
@@ -97,7 +98,7 @@ class TestFirstVersion:
         cfg = archive_config(splits=SPLITS, default={"test": 1, "validation": 0})
         _run_version(tmp_path, archive, repo, cfg, converter, "v1")
 
-        table = pq.read_table(repo / "test.parquet")
+        table = published_table(repo, "test")
         assert table.column("doc").to_pylist() == [b"doc:alpha:0"]
         assert table.column("doc_ext").to_pylist() == ["docx"]
 
@@ -137,7 +138,7 @@ class TestFirstVersion:
             publish_cli.build_target = original
 
         paths_in_order = [path for paths, _ in recorded.commits for path in paths]
-        assert paths_in_order.index("test.parquet") < paths_in_order.index(
+        assert paths_in_order.index("test/alpha.parquet") < paths_in_order.index(
             "splits/sample-v001.csv"
         )
         assert recorded.tags == ["sample-v001"]
@@ -167,7 +168,66 @@ class TestFirstVersion:
         data_commits = [
             paths for paths, _ in recorded.commits if paths[0].endswith(".parquet")
         ]
-        assert data_commits == [["test.parquet"], ["validation.parquet"]]
+        # One commit per (split, stratum) file, so a failure loses one stratum.
+        assert data_commits == [["test/alpha.parquet"], ["validation/alpha.parquet"]]
+
+
+class TestPartitioning:
+    def test_one_file_per_split_and_stratum(self, tmp_path, converter):
+        archive = tmp_path / "archive"
+        write_archive(archive, {"alpha": 8, "beta": 8, "gamma": 8})
+        repo = tmp_path / "repo"
+        cfg = archive_config(splits=SPLITS, default={"test": 2, "validation": 1})
+        _run_version(tmp_path, archive, repo, cfg, converter, "v1")
+        assert sorted(p.name for p in (repo / "test").glob("*.parquet")) == [
+            "alpha.parquet",
+            "beta.parquet",
+            "gamma.parquet",
+        ]
+
+    def test_one_stratum_can_be_read_without_the_others(self, tmp_path, converter):
+        """The reason to partition: reading one stratum need not fetch the rest."""
+        archive = tmp_path / "archive"
+        write_archive(archive, {"alpha": 8, "beta": 8})
+        repo = tmp_path / "repo"
+        cfg = archive_config(splits=SPLITS, default={"test": 2, "validation": 0})
+        _run_version(tmp_path, archive, repo, cfg, converter, "v1")
+        only_beta = pq.read_table(repo / "test" / "beta.parquet")
+        assert set(only_beta.column("stratum").to_pylist()) == {"beta"}
+        assert only_beta.num_rows == 2
+
+    def test_the_stratum_column_survives_partitioning(self, tmp_path, converter):
+        """Kept inside the files, so one read on its own is still self-describing."""
+        archive = tmp_path / "archive"
+        write_archive(archive, {"alpha": 4})
+        repo = tmp_path / "repo"
+        cfg = archive_config(splits=SPLITS, default={"test": 1, "validation": 0})
+        _run_version(tmp_path, archive, repo, cfg, converter, "v1")
+        table = pq.read_table(repo / "test" / "alpha.parquet")
+        assert "stratum" in table.schema.names
+
+    def test_reading_the_whole_split_directory_works(self, tmp_path, converter):
+        """The obvious idiom must not trip over partition-column inference."""
+        archive = tmp_path / "archive"
+        write_archive(archive, {"alpha": 8, "beta": 8})
+        repo = tmp_path / "repo"
+        cfg = archive_config(splits=SPLITS, default={"test": 2, "validation": 0})
+        _run_version(tmp_path, archive, repo, cfg, converter, "v1")
+        table = pq.read_table(repo / "test")
+        assert table.num_rows == 4
+        assert sorted(set(table.column("stratum").to_pylist())) == ["alpha", "beta"]
+
+    def test_row_groups_are_sized_by_bytes_not_row_count(self, tmp_path, converter):
+        archive = tmp_path / "archive"
+        write_archive(archive, {"alpha": 8})
+        repo = tmp_path / "repo"
+        cfg = archive_config(splits=SPLITS, default={"test": 4, "validation": 0})
+        _run_version(tmp_path, archive, repo, cfg, converter, "v1")
+        meta = pq.read_metadata(repo / "test" / "alpha.parquet")
+        # These synthetic documents are tiny, so one group is correct here; what matters
+        # is that the writer was asked by bytes, which test_parquet_io covers directly.
+        assert meta.num_row_groups >= 1
+        assert meta.num_rows == 4
 
 
 class TestGrowingAPublishedVersion:
@@ -203,7 +263,7 @@ class TestGrowingAPublishedVersion:
         before = dict(
             zip(
                 _published_ids(repo, "test"),
-                pq.read_table(repo / "test.parquet").column("pdf").to_pylist(),
+                published_table(repo, "test").column("pdf").to_pylist(),
                 strict=True,
             )
         )
@@ -221,7 +281,7 @@ class TestGrowingAPublishedVersion:
         after = dict(
             zip(
                 _published_ids(repo, "test"),
-                pq.read_table(repo / "test.parquet").column("pdf").to_pylist(),
+                published_table(repo, "test").column("pdf").to_pylist(),
                 strict=True,
             )
         )

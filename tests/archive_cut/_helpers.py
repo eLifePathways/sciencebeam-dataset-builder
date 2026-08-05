@@ -213,3 +213,17 @@ def added_table(version_dir: Path, split: str) -> pa.Table:
 
 def rendered_table(version_dir: Path, split: str) -> pa.Table:
     return stage_table(version_dir, "rendered", split)
+
+
+def published_files(repo: Path, split: str) -> list[Path]:
+    """Every published data file for one split, across its partitions."""
+    directory = repo / split
+    return sorted(directory.glob("*.parquet")) if directory.is_dir() else []
+
+
+def published_table(repo: Path, split: str) -> pa.Table:
+    """One published split's rows, concatenated across its partitions."""
+    tables = [pq.read_table(path) for path in published_files(repo, split)]
+    if not tables:
+        raise AssertionError(f"nothing published for split {split!r} in {repo}")
+    return pa.concat_tables(tables)

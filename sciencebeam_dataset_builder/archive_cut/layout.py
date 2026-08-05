@@ -42,9 +42,34 @@ def version_name(config: CorpusConfig) -> str:
     return version_stem(config.name, config.version)
 
 
-def split_path_in_repo(split: str) -> str:
-    """One file per split at the repo root, which is what readers expect to name."""
-    return f"{split}.parquet"
+def split_partition_path_in_repo(split: str, stratum: str) -> str:
+    """One file per split and stratum: `<split>/<stratum>.parquet`.
+
+    Partitioned rather than one file per split for three reasons that all bit in practice:
+    reading one stratum need not fetch the others, an interrupted upload loses one stratum
+    rather than the lot, and a prefix of a single file is one stratum's documents rather
+    than a sample — which silently defeats the point of a balanced corpus.
+
+    Deliberately *not* the Hive `stratum=value/` layout. The stratum column is kept inside
+    the files so each is self-describing, and Hive naming makes readers infer a partition
+    column from the path that then conflicts with the real one — a plain
+    `read_table("test/")` fails with a type mismatch. Naming the file after the stratum
+    keeps the directory readable by the obvious idiom and the stratum legible either way.
+    """
+    if "/" in stratum or stratum.startswith("."):
+        raise ValueError(
+            f"stratum {stratum!r} cannot name a file; a stratum value has to be usable "
+            f"as a filename component"
+        )
+    return f"{split}/{stratum}.parquet"
+
+
+def published_split_paths(files: Iterable[str], split: str) -> list[str]:
+    """Every published data file belonging to one split."""
+    prefix = f"{split}/"
+    return sorted(
+        path for path in files if path.startswith(prefix) and path.endswith(".parquet")
+    )
 
 
 def manifest_path_in_repo(name: str, version: int) -> str:
