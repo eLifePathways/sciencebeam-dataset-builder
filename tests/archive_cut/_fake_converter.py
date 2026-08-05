@@ -9,6 +9,7 @@ provoke each failure mode:
     *-empty.*     write a zero-byte PDF
     *-garbage.*   write bytes that are not a PDF
     *-hangs.*     sleep past any sane timeout
+    *-flaky.*     sleep past the timeout on the first attempt only, then succeed
 """
 
 import sys
@@ -45,6 +46,15 @@ def main(argv: list[str]) -> int:
     if stem.endswith("-hangs"):
         time.sleep(30)
         return 0
+    if stem.endswith("-flaky"):
+        # A marker beside the output directory, so "first attempt" survives the fresh
+        # working directory each attempt gets.
+        marker = outdir.parent.parent / f"{stem}.attempted"
+        if not marker.exists():
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text("1")
+            time.sleep(30)
+            return 0
 
     outdir.mkdir(parents=True, exist_ok=True)
     target = outdir / f"{stem}.pdf"

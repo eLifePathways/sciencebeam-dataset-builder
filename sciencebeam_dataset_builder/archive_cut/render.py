@@ -34,12 +34,26 @@ class RenderError(RuntimeError):
     """Rendering cannot proceed at all — a missing converter, say."""
 
 
+class RenderTimeout(ValueError):
+    """The converter did not finish in time.
+
+    Kept apart from every other per-document failure because it says nothing about the
+    document: LibreOffice hangs on occasion, and a 200 KiB file exceeding a five-minute
+    limit is evidence of that rather than of an unconvertible document. Treating it like
+    a corrupt file would drop a perfectly good document from the corpus.
+    """
+
+
 @dataclasses.dataclass(frozen=True)
 class RenderFailure:
     """One document that could not be rendered, and why."""
 
     id: str
     reason: str
+    # Whether trying again might succeed. A timeout might; a file the converter refuses
+    # will not. Publishing treats the two differently, since excluding a document that
+    # merely timed out would quietly shrink the corpus.
+    retryable: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -130,7 +144,7 @@ def render_document(
     except FileNotFoundError as exc:
         raise RenderError(f"converter {command!r} not found") from exc
     except subprocess.TimeoutExpired as exc:
-        raise ValueError(f"converter timed out after {timeout}s") from exc
+        raise RenderTimeout(f"converter timed out after {timeout}s") from exc
 
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip().splitlines()

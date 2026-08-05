@@ -9,11 +9,12 @@ run and a later version backfills the gap.
 
 import argparse
 import csv
+import json
 import logging
 import shutil
 import sys
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import pyarrow as pa
@@ -38,13 +39,16 @@ from sciencebeam_dataset_builder.archive_cut.render import (
     DEFAULT_TIMEOUT_SECONDS,
     RenderError,
     RenderFailure,
+    RenderTimeout,
+    RenderedDocument,
     converter_version,
     render_document,
 )
 
 LOGGER = logging.getLogger(__name__)
 
-FAILURE_FIELDS = ["id", "reason"]
+FAILURE_FIELDS = ["id", "reason", "retryable"]
+TIMEOUT_ATTEMPTS = 2
 
 PDF_COLUMN = "pdf"
 CONVERTER_COLUMN = "pdf_converter_version"
@@ -54,10 +58,20 @@ def read_failures(path: Path) -> list[RenderFailure]:
     if not path.exists():
         return []
     with path.open(encoding="utf-8", newline="") as f:
-        return [
-            RenderFailure(id=row["id"], reason=row.get("reason", ""))
-            for row in csv.DictReader(f)
-        ]
+        return [_failure_from_row(row) for row in csv.DictReader(f)]
+
+
+def _failure_from_row(row: dict[str, str | None]) -> RenderFailure:
+    reason = row.get("reason") or ""
+    recorded = row.get("retryable")
+    # Files written before the column existed still have to be read correctly, so fall
+    # back to what the reason says.
+    retryable = (
+        recorded.strip().lower() in {"true", "1", "yes"}
+        if recorded is not None
+        else "timed out" in reason
+    )
+    return RenderFailure(id=row.get("id") or "", reason=reason, retryable=retryable)
 
 
 def merge_failures(
@@ -80,7 +94,13 @@ def write_failures(path: Path, failures: Sequence[RenderFailure]) -> None:
         writer = csv.DictWriter(f, fieldnames=FAILURE_FIELDS)
         writer.writeheader()
         for failure in failures:
-            writer.writerow({"id": failure.id, "reason": failure.reason})
+            writer.writerow(
+                {
+                    "id": failure.id,
+                    "reason": failure.reason,
+                    "retryable": str(failure.retryable).lower(),
+                }
+            )
 
 
 def render_table(
@@ -113,14 +133,23 @@ def render_table(
             zip(ids, documents, extensions, strict=True)
         ):
             try:
-                rendered = render_document(
+                rendered = _render_with_timeout_retries(
                     document=bytes(document),
                     document_id=document_id,
                     extension=extension,
-                    work_dir=root / str(index),
+                    root=root,
+                    index=index,
                     command=command,
                     timeout=timeout,
                 )
+            except RenderTimeout as exc:
+                LOGGER.warning("Gave up rendering %s: %s", document_id, exc)
+                failures.append(
+                    RenderFailure(id=document_id, reason=str(exc), retryable=True)
+                )
+                if on_progress is not None:
+                    on_progress(1)
+                continue
             except ValueError as exc:
                 LOGGER.warning("Failed to render %s: %s", document_id, exc)
                 failures.append(RenderFailure(id=document_id, reason=str(exc)))
@@ -145,6 +174,45 @@ def render_table(
         ),
         failures,
     )
+
+
+def _render_with_timeout_retries(
+    *,
+    document: bytes,
+    document_id: str,
+    extension: str,
+    root: Path,
+    index: int,
+    command: str,
+    timeout: int,
+    attempts: int = TIMEOUT_ATTEMPTS,
+) -> RenderedDocument:
+    """Render one document, giving a timeout another go in a fresh directory.
+
+    LibreOffice hangs occasionally rather than predictably, so one timeout is not
+    evidence about the document. Each attempt gets its own working directory, so a stale
+    profile from the hung attempt cannot cause the next one.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return render_document(
+                document=document,
+                document_id=document_id,
+                extension=extension,
+                work_dir=root / f"{index}-{attempt}",
+                command=command,
+                timeout=timeout,
+            )
+        except RenderTimeout:
+            if attempt == attempts:
+                raise
+            LOGGER.warning(
+                "Rendering %s timed out (attempt %d/%d); trying again",
+                document_id,
+                attempt,
+                attempts,
+            )
+    raise RenderTimeout(f"converter timed out after {timeout}s")
 
 
 def _temporary_directory(work_dir: Path | None) -> "_WorkDir":
@@ -199,6 +267,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help=(
+            "Render again the shards holding documents that failed retryably, such as "
+            "a timeout. Useful with a longer --timeout."
+        ),
+    )
+    parser.add_argument(
         "--work-dir",
         type=Path,
         help="Keep intermediate files here instead of a temporary directory.",
@@ -234,8 +310,10 @@ def _run(args: argparse.Namespace) -> None:
     LOGGER.info("Converter: %s", version)
 
     completed_file = completed_path(args.version_dir, RENDERED_DIRECTORY)
-    completed = read_completed(completed_file)
     failures_path = args.version_dir / FAILURES_FILENAME
+    if args.retry_failed:
+        reopen_retryable(args.version_dir, added, completed_file, failures_path)
+    completed = read_completed(completed_file)
     all_failures: list[RenderFailure] = []
     rendered_counts: dict[str, int] = {}
     for rows in completed.values():
@@ -302,6 +380,61 @@ def _run(args: argparse.Namespace) -> None:
         print(f"Listed in {FAILURES_FILENAME}, to be excluded when publishing")
     else:
         print("No rendering failures")
+
+
+def reopen_retryable(
+    version_dir: Path,
+    added: Mapping[str, list[Path]],
+    completed_file: Path,
+    failures_path: Path,
+) -> None:
+    """Forget the shards holding retryably-failed documents, so they render again.
+
+    Their completion records and failure rows are dropped together: a shard is either
+    finished with its failures recorded, or not finished at all.
+    """
+    failures = read_failures(failures_path)
+    retryable = {failure.id for failure in failures if failure.retryable}
+    if not retryable:
+        print("No retryable failures to render again")
+        return
+
+    completed = read_completed(completed_file)
+    reopened: set[str] = set()
+    for split, paths in added.items():
+        for path in paths:
+            key = f"{split}/{path.name}"
+            if key not in completed:
+                continue
+            ids = {
+                str(value)
+                for value in pq.read_table(path, columns=["id"])
+                .column("id")
+                .to_pylist()
+            }
+            if ids & retryable:
+                reopened.add(key)
+                target = shard_output_path(
+                    version_dir, RENDERED_DIRECTORY, split, path.name
+                )
+                target.unlink(missing_ok=True)
+
+    remaining = {key: rows for key, rows in completed.items() if key not in reopened}
+    _rewrite_completed(completed_file, remaining)
+    write_failures(failures_path, [f for f in failures if f.id not in retryable])
+    print(
+        f"Rendering {len(reopened)} shard file(s) again for "
+        f"{len(retryable)} retryable failure(s)"
+    )
+
+
+def _rewrite_completed(path: Path, records: Mapping[str, Mapping[str, int]]) -> None:
+    lines = [
+        json.dumps({"shard": shard, "rows": dict(rows)})
+        for shard, rows in records.items()
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
 
 
 def _parquet_writer(table: pa.Table) -> "Callable[[Path], None]":

@@ -46,6 +46,27 @@ def manifest_without_failures(
     return kept, dropped
 
 
+def check_failures_resolved(
+    failures: Sequence[RenderFailure], accept_unresolved: bool = False
+) -> None:
+    """Refuse to publish while a retryable failure is unresolved.
+
+    Excluding a document that merely timed out would quietly shrink the corpus on the
+    strength of an environmental hiccup. Rendering it again is nearly always the right
+    answer, so this insists the choice is made rather than made silently.
+    """
+    unresolved = [failure for failure in failures if failure.retryable]
+    if not unresolved or accept_unresolved:
+        return
+    listed = "\n".join(f"  {f.id}: {f.reason}" for f in unresolved)
+    raise PublishError(
+        f"{len(unresolved)} document(s) failed in a way that may succeed on another "
+        f"attempt:\n{listed}\n"
+        f"Render them again (`--retry-failed`, perhaps with a longer --timeout), or "
+        f"pass --exclude-unresolved to publish without them."
+    )
+
+
 def config_with_exclusions(
     config: CorpusConfig, failures: Sequence[RenderFailure]
 ) -> CorpusConfig:

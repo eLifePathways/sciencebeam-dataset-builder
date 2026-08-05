@@ -41,6 +41,7 @@ from sciencebeam_dataset_builder.archive_cut.manifest import (
 from sciencebeam_dataset_builder.archive_cut.publish import (
     PreparedSplit,
     PublishError,
+    check_failures_resolved,
     check_output_schema,
     config_with_exclusions,
     describe_publication,
@@ -238,6 +239,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Create the target repo (private) if it does not exist yet.",
     )
     parser.add_argument(
+        "--exclude-unresolved",
+        action="store_true",
+        help=(
+            "Publish without documents whose failure might have succeeded on another "
+            "attempt, excluding them like any other failure."
+        ),
+    )
+    parser.add_argument(
         "--no-tag",
         action="store_true",
         help="Skip tagging the published version.",
@@ -266,6 +275,7 @@ def _run(args: argparse.Namespace) -> None:
     rows = read_manifest(manifest_path)
     failures: list[RenderFailure] = read_failures(args.version_dir / FAILURES_FILENAME)
 
+    check_failures_resolved(failures, accept_unresolved=args.exclude_unresolved)
     kept, dropped = manifest_without_failures(rows, failures)
     published_config = config_with_exclusions(config, failures)
     target = build_target(args, config)
