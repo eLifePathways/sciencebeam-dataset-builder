@@ -42,26 +42,35 @@ def version_name(config: CorpusConfig) -> str:
     return version_stem(config.name, config.version)
 
 
-def split_partition_path_in_repo(split: str, stratum: str) -> str:
-    """One file per split and stratum: `<split>/<stratum>.parquet`.
+def split_partition_path_in_repo(
+    split: str, stratum_column: str, stratum: str, version: int, index: int
+) -> str:
+    """`<split>/<column>=<stratum>/v<NNN>-<NNNNN>.parquet` — Hive, and append-only.
 
-    Partitioned rather than one file per split for three reasons that all bit in practice:
-    reading one stratum need not fetch the others, an interrupted upload loses one stratum
-    rather than the lot, and a prefix of a single file is one stratum's documents rather
-    than a sample — which silently defeats the point of a balanced corpus.
+    Hive because it is what readers already understand: pyarrow and `datasets` both
+    reconstruct the stratum from the path, so the column is *not* stored in the files, as
+    the convention requires.
 
-    Deliberately *not* the Hive `stratum=value/` layout. The stratum column is kept inside
-    the files so each is self-describing, and Hive naming makes readers infer a partition
-    column from the path that then conflicts with the real one — a plain
-    `read_table("test/")` fails with a type mismatch. Naming the file after the stratum
-    keeps the directory readable by the obvious idiom and the stratum legible either way.
+    Version-stamped and chunked because a version must never rewrite an earlier version's
+    files. Rewriting them would re-upload bytes that have not changed -- the whole corpus
+    on every growth -- and would disturb PDFs rendered by an earlier converter. Immutable
+    data files plus a manifest that says which of them constitute a version is the same
+    arrangement Iceberg and Delta use, minus the query engine.
     """
-    if "/" in stratum or stratum.startswith("."):
+    _check_names_a_file(stratum)
+    _check_names_a_file(stratum_column)
+    return (
+        f"{split}/{stratum_column}={stratum}/"
+        f"v{version:0{_VERSION_DIGITS}d}-{index:05d}.parquet"
+    )
+
+
+def _check_names_a_file(value: str) -> None:
+    if "/" in value or value.startswith("."):
         raise ValueError(
-            f"stratum {stratum!r} cannot name a file; a stratum value has to be usable "
-            f"as a filename component"
+            f"{value!r} cannot name a path component; a stratum and its column have to "
+            f"be usable in a file path"
         )
-    return f"{split}/{stratum}.parquet"
 
 
 def published_split_paths(files: Iterable[str], split: str) -> list[str]:

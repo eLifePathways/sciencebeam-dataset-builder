@@ -24,6 +24,8 @@ from sciencebeam_dataset_builder.archive_cut.render_cli import main as render_ma
 
 from tests.archive_cut._helpers import (
     archive_config,
+    published_files,
+    published_partition,
     published_table,
     paper_id,
     write_archive,
@@ -138,9 +140,9 @@ class TestFirstVersion:
             publish_cli.build_target = original
 
         paths_in_order = [path for paths, _ in recorded.commits for path in paths]
-        assert paths_in_order.index("test/alpha.parquet") < paths_in_order.index(
-            "splits/sample-v001.csv"
-        )
+        assert paths_in_order.index(
+            "test/stratum=alpha/v001-00000.parquet"
+        ) < paths_in_order.index("splits/sample-v001.csv")
         assert recorded.tags == ["sample-v001"]
 
     def test_each_data_file_is_its_own_commit(self, tmp_path, converter):
@@ -169,7 +171,10 @@ class TestFirstVersion:
             paths for paths, _ in recorded.commits if paths[0].endswith(".parquet")
         ]
         # One commit per (split, stratum) file, so a failure loses one stratum.
-        assert data_commits == [["test/alpha.parquet"], ["validation/alpha.parquet"]]
+        assert data_commits == [
+            ["test/stratum=alpha/v001-00000.parquet"],
+            ["validation/stratum=alpha/v001-00000.parquet"],
+        ]
 
 
 class TestPartitioning:
@@ -179,10 +184,10 @@ class TestPartitioning:
         repo = tmp_path / "repo"
         cfg = archive_config(splits=SPLITS, default={"test": 2, "validation": 1})
         _run_version(tmp_path, archive, repo, cfg, converter, "v1")
-        assert sorted(p.name for p in (repo / "test").glob("*.parquet")) == [
-            "alpha.parquet",
-            "beta.parquet",
-            "gamma.parquet",
+        assert sorted(p.parent.name for p in (repo / "test").glob("*/*.parquet")) == [
+            "stratum=alpha",
+            "stratum=beta",
+            "stratum=gamma",
         ]
 
     def test_one_stratum_can_be_read_without_the_others(self, tmp_path, converter):
@@ -192,19 +197,26 @@ class TestPartitioning:
         repo = tmp_path / "repo"
         cfg = archive_config(splits=SPLITS, default={"test": 2, "validation": 0})
         _run_version(tmp_path, archive, repo, cfg, converter, "v1")
-        only_beta = pq.read_table(repo / "test" / "beta.parquet")
-        assert set(only_beta.column("stratum").to_pylist()) == {"beta"}
+        only_beta = published_partition(repo, "test", "stratum", "beta")
         assert only_beta.num_rows == 2
+        # Reading one partition directory fetches only that stratum's file.
+        assert len(list((repo / "test" / "stratum=beta").glob("*.parquet"))) == 1
 
-    def test_the_stratum_column_survives_partitioning(self, tmp_path, converter):
-        """Kept inside the files, so one read on its own is still self-describing."""
+    def test_the_stratum_column_is_reconstructed_from_the_path(
+        self, tmp_path, converter
+    ):
+        """Hive convention: the column lives in the path, not in the file."""
         archive = tmp_path / "archive"
         write_archive(archive, {"alpha": 4})
         repo = tmp_path / "repo"
         cfg = archive_config(splits=SPLITS, default={"test": 1, "validation": 0})
         _run_version(tmp_path, archive, repo, cfg, converter, "v1")
-        table = pq.read_table(repo / "test" / "alpha.parquet")
-        assert "stratum" in table.schema.names
+
+        raw = pq.read_table(published_files(repo, "test")[0], partitioning=None)
+        assert "stratum" not in raw.schema.names
+
+        reconstructed = published_partition(repo, "test", "stratum", "alpha")
+        assert reconstructed.column("stratum").to_pylist() == ["alpha"]
 
     def test_reading_the_whole_split_directory_works(self, tmp_path, converter):
         """The obvious idiom must not trip over partition-column inference."""
@@ -223,7 +235,7 @@ class TestPartitioning:
         repo = tmp_path / "repo"
         cfg = archive_config(splits=SPLITS, default={"test": 4, "validation": 0})
         _run_version(tmp_path, archive, repo, cfg, converter, "v1")
-        meta = pq.read_metadata(repo / "test" / "alpha.parquet")
+        meta = pq.read_metadata(published_files(repo, "test")[0])
         # These synthetic documents are tiny, so one group is correct here; what matters
         # is that the writer was asked by bytes, which test_parquet_io covers directly.
         assert meta.num_row_groups >= 1

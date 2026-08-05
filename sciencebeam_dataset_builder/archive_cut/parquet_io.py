@@ -20,11 +20,16 @@ import pyarrow.parquet as pq
 
 LOGGER = logging.getLogger(__name__)
 
-# Small on purpose. The Hub's 100-300 MB guidance exists so its viewer need not re-convert
-# files, and a private repo has no viewer — while large groups are exactly what makes
-# reading a few documents expensive.
-DEFAULT_ROW_GROUP_BYTES = 16 * 1024**2
+# Small on purpose, and smaller than the chunk: parquet's minimum fetch is one row group,
+# so this is the granularity at which a reader can take a few documents. The corpus's
+# random sample of each stratum sits at the front of its files, so small groups are what
+# make "the first few of every stratum" cheap.
+DEFAULT_ROW_GROUP_BYTES = 8 * 1024**2
 DEFAULT_ROW_GROUP_MAX_ROWS = 256
+
+# One file per this much payload. A failure part way through an upload costs one chunk, and
+# at a slow uplink that difference is minutes rather than half an hour.
+DEFAULT_CHUNK_BYTES = 32 * 1024**2
 
 
 def row_payload_sizes(table: pa.Table) -> list[int]:
@@ -62,6 +67,20 @@ def row_group_boundaries(
     if start < len(sizes):
         groups.append((start, len(sizes) - start))
     return groups
+
+
+def chunk_table(
+    table: pa.Table, target_bytes: int = DEFAULT_CHUNK_BYTES
+) -> list[pa.Table]:
+    """Split a table into files-worth of rows, by payload bytes. Row order is preserved."""
+    if not table.num_rows:
+        return []
+    return [
+        table.slice(offset, length)
+        for offset, length in row_group_boundaries(
+            row_payload_sizes(table), target_bytes=target_bytes, max_rows=10**9
+        )
+    ]
 
 
 def write_table_with_byte_sized_row_groups(

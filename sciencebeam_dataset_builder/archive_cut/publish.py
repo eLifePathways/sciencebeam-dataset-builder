@@ -1,10 +1,10 @@
 """Assembling a publishable corpus version from a previous one and a new cut.
 
-One file per split, rewritten each version rather than appended to. That is not the
-cheapest option — it re-uploads rows whose bytes have not changed — but downstream
-readers name a single file per corpus, so a split spread over several files could not be
-read without changing them. Nesting is unaffected either way: it is about membership, not
-bytes.
+A version adds files and never rewrites an earlier version's. Splits are Hive-partitioned
+by stratum and chunked by payload bytes, so growing the corpus uploads only what it adds,
+an interrupted upload costs one chunk, and rows published earlier keep the bytes -- and the
+rendered PDFs -- they were published with. Nesting is unaffected by any of this: it is
+about membership, which the manifest records.
 
 Rows a version failed to render are dropped from the published manifest and added to the
 config's exclusions, so the published data and its manifest agree, the same document is
@@ -13,7 +13,7 @@ not attempted again on every run, and a later version fills the gap.
 
 import dataclasses
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 
 import pyarrow as pa
 
@@ -84,58 +84,57 @@ def config_with_exclusions(
     return dataclasses.replace(config, exclude=tuple(excluded))
 
 
-def merge_split(
-    split: str,
-    previous: pa.Table | None,
-    added: pa.Table | None,
-    order: Sequence[ManifestRow],
-    id_column: str,
+def order_new_rows(
+    split: str, table: pa.Table, order: Sequence[ManifestRow], id_column: str
 ) -> pa.Table:
-    """Combine a split's carried-over and new rows, in manifest order.
+    """Put this version's new rows into manifest order.
 
-    Ordered by the manifest rather than by which table a row came from, so republishing
-    the same version produces the same bytes.
+    Ordered by the manifest rather than by which shard they were read from, so
+    republishing a version reproduces its bytes. Nothing is merged with the previously
+    published rows: those live in their own files and are never rewritten.
     """
-    tables = [table for table in (previous, added) if table is not None]
-    if not tables:
-        raise PublishError(f"split {split!r} has no rows to publish")
-    if len(tables) == 2:
-        _check_schemas_match(split, tables[0], tables[1])
-    combined = pa.concat_tables(tables)
-
-    wanted = [row.id for row in order if row.split == split]
     position = {
         str(value): index
-        for index, value in enumerate(combined.column(id_column).to_pylist())
+        for index, value in enumerate(table.column(id_column).to_pylist())
     }
-    missing = [paper_id for paper_id in wanted if paper_id not in position]
+    wanted = [row.id for row in order if row.split == split and row.id in position]
+    unlisted = set(position) - {row.id for row in order if row.split == split}
+    if unlisted:
+        raise PublishError(
+            f"split {split!r} holds {len(unlisted)} rendered document(s) the manifest "
+            f"does not list for it, first {sorted(unlisted)[0]!r}"
+        )
+    return table.take(pa.array([position[i] for i in wanted], type=pa.int64()))
+
+
+def check_manifest_is_covered(
+    rows: Sequence[ManifestRow], published_ids: Set[str], new_ids: Set[str]
+) -> None:
+    """The manifest must be exactly what is published plus what is about to be.
+
+    Append-only publishing makes a new failure possible that rewriting could not: a
+    document already in an earlier version's file could be written again, leaving the split
+    holding it twice. And a document the manifest lists could be in neither place, leaving
+    a manifest that describes rows nobody can read.
+    """
+    duplicated = sorted(published_ids & new_ids)
+    if duplicated:
+        raise PublishError(
+            f"{len(duplicated)} document(s) are already published and would be written "
+            f"again, first {duplicated[0]!r}. A version must only add documents."
+        )
+    listed = {row.id for row in rows}
+    missing = sorted(listed - published_ids - new_ids)
     if missing:
         raise PublishError(
-            f"split {split!r} is missing {len(missing)} document(s) the manifest lists, "
-            f"first {missing[0]!r}. The previous version's data may not have been "
-            f"provided."
+            f"the manifest lists {len(missing)} document(s) that are neither published "
+            f"nor being written, first {missing[0]!r}"
         )
-    extra = len(position) - len(wanted)
-    if extra > 0:
-        LOGGER.warning(
-            "Split %r holds %d row(s) the manifest does not list; they are dropped",
-            split,
-            extra,
-        )
-    return combined.take(pa.array([position[i] for i in wanted], type=pa.int64()))
-
-
-def _check_schemas_match(split: str, previous: pa.Table, added: pa.Table) -> None:
-    previous_columns = set(previous.schema.names)
-    added_columns = set(added.schema.names)
-    if previous_columns != added_columns:
-        only_previous = sorted(previous_columns - added_columns)
-        only_added = sorted(added_columns - previous_columns)
+    unlisted = sorted((published_ids | new_ids) - listed)
+    if unlisted:
         raise PublishError(
-            f"split {split!r} cannot be merged: the published rows and the new rows "
-            f"have different columns"
-            + (f"; only published: {', '.join(only_previous)}" if only_previous else "")
-            + (f"; only new: {', '.join(only_added)}" if only_added else "")
+            f"{len(unlisted)} document(s) would be published without appearing in the "
+            f"manifest, first {unlisted[0]!r}"
         )
 
 

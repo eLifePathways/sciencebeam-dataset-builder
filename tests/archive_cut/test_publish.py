@@ -9,11 +9,12 @@ from sciencebeam_dataset_builder.archive_cut.manifest import ManifestRow
 from sciencebeam_dataset_builder.archive_cut.publish import (
     PreparedSplit,
     PublishError,
+    check_manifest_is_covered,
     check_output_schema,
     config_with_exclusions,
     describe_publication,
     manifest_without_failures,
-    merge_split,
+    order_new_rows,
 )
 from sciencebeam_dataset_builder.archive_cut.render import RenderFailure
 from sciencebeam_dataset_builder.archive_cut.upload import (
@@ -100,58 +101,64 @@ class TestConfigWithExclusions:
         assert config_with_exclusions(config, []) is config
 
 
-class TestMergeSplit:
-    def test_new_rows_alone_are_published_in_manifest_order(self):
+class TestOrderNewRows:
+    def test_rows_come_out_in_manifest_order(self):
         rows = _rows(("b", "alpha", 1, "test"), ("a", "alpha", 0, "test"))
-        merged = merge_split("test", None, _table(["a", "b"]), rows, "id")
+        ordered = order_new_rows("test", _table(["a", "b"]), rows, "id")
         # Manifest order, not table order.
-        assert merged.column("id").to_pylist() == ["b", "a"]
+        assert ordered.column("id").to_pylist() == ["b", "a"]
 
-    def test_published_and_new_rows_are_combined(self):
-        rows = _rows(
-            ("a", "alpha", 0, "test"),
-            ("b", "alpha", 1, "test"),
-            ("c", "alpha", 2, "test"),
-        )
-        merged = merge_split("test", _table(["a", "b"]), _table(["c"]), rows, "id")
-        assert merged.column("id").to_pylist() == ["a", "b", "c"]
-
-    def test_the_result_is_ordered_the_same_however_the_inputs_arrive(self):
-        rows = _rows(
-            ("a", "alpha", 0, "test"),
-            ("b", "alpha", 1, "test"),
-            ("c", "alpha", 2, "test"),
-        )
-        one = merge_split("test", _table(["a", "b"]), _table(["c"]), rows, "id")
-        other = merge_split("test", _table(["b", "a"]), _table(["c"]), rows, "id")
-        assert one.column("id").to_pylist() == other.column("id").to_pylist()
-
-    def test_only_the_named_split_is_taken(self):
+    def test_a_document_belonging_to_another_split_is_refused(self):
+        """Rendering writes one directory per split, so a mixed table is a real fault."""
         rows = _rows(("a", "alpha", 0, "test"), ("b", "alpha", 1, "validation"))
-        merged = merge_split("test", None, _table(["a", "b"]), rows, "id")
-        assert merged.column("id").to_pylist() == ["a"]
-
-    def test_a_document_the_manifest_lists_but_no_table_holds_is_reported(self):
-        rows = _rows(("a", "alpha", 0, "test"), ("missing", "alpha", 1, "test"))
         with pytest.raises(PublishError) as exc_info:
-            merge_split("test", None, _table(["a"]), rows, "id")
-        assert "missing" in str(exc_info.value)
+            order_new_rows("test", _table(["a", "b"]), rows, "id")
+        assert "b" in str(exc_info.value)
 
-    def test_mismatched_columns_between_versions_are_reported(self):
-        rows = _rows(("a", "alpha", 0, "test"), ("b", "alpha", 1, "test"))
+    def test_rows_already_published_are_simply_absent(self):
+        """Nothing is merged: a version writes only what rendering produced."""
+        rows = _rows(
+            ("a", "alpha", 0, "test"),
+            ("b", "alpha", 1, "test"),
+            ("c", "alpha", 2, "test"),
+        )
+        ordered = order_new_rows("test", _table(["c"]), rows, "id")
+        assert ordered.column("id").to_pylist() == ["c"]
+
+    def test_a_rendered_document_the_manifest_does_not_list_is_reported(self):
+        rows = _rows(("a", "alpha", 0, "test"))
         with pytest.raises(PublishError) as exc_info:
-            merge_split(
-                "test",
-                _table(["a"]),
-                _table(["b"], extra_column="surprise"),
-                rows,
-                "id",
-            )
+            order_new_rows("test", _table(["a", "surprise"]), rows, "id")
         assert "surprise" in str(exc_info.value)
 
-    def test_no_rows_at_all_is_reported(self):
-        with pytest.raises(PublishError):
-            merge_split("test", None, None, [], "id")
+
+class TestCheckManifestIsCovered:
+    def test_published_plus_new_equal_to_the_manifest_is_fine(self):
+        rows = _rows(("a", "alpha", 0, "test"), ("b", "alpha", 1, "test"))
+        check_manifest_is_covered(rows, {"a"}, {"b"})
+
+    def test_a_first_version_has_nothing_published(self):
+        rows = _rows(("a", "alpha", 0, "test"))
+        check_manifest_is_covered(rows, set(), {"a"})
+
+    def test_writing_an_already_published_document_is_refused(self):
+        """Append-only makes this possible in a way rewriting did not."""
+        rows = _rows(("a", "alpha", 0, "test"))
+        with pytest.raises(PublishError) as exc_info:
+            check_manifest_is_covered(rows, {"a"}, {"a"})
+        assert "already published" in str(exc_info.value)
+
+    def test_a_manifest_row_in_neither_place_is_refused(self):
+        rows = _rows(("a", "alpha", 0, "test"), ("b", "alpha", 1, "test"))
+        with pytest.raises(PublishError) as exc_info:
+            check_manifest_is_covered(rows, {"a"}, set())
+        assert "b" in str(exc_info.value)
+
+    def test_publishing_something_unlisted_is_refused(self):
+        rows = _rows(("a", "alpha", 0, "test"))
+        with pytest.raises(PublishError) as exc_info:
+            check_manifest_is_covered(rows, set(), {"a", "extra"})
+        assert "extra" in str(exc_info.value)
 
 
 class TestCheckOutputSchema:

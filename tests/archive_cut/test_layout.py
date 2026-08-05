@@ -1,5 +1,9 @@
 """Tests for archive_cut.layout — how versions are named and found."""
 
+from pathlib import Path
+
+import pytest
+
 from sciencebeam_dataset_builder.archive_cut.layout import (
     config_path_in_repo,
     latest_published_version,
@@ -40,14 +44,33 @@ class TestVersionNaming:
 
 
 class TestRepoPaths:
-    def test_a_split_is_partitioned_by_stratum(self):
-        assert split_partition_path_in_repo("test", "pbio") == "test/pbio.parquet"
+    def test_a_split_is_hive_partitioned_and_version_stamped(self):
+        assert (
+            split_partition_path_in_repo("test", "journal", "pbio", 1, 0)
+            == "test/journal=pbio/v001-00000.parquet"
+        )
 
-    def test_a_stratum_that_cannot_name_a_file_is_rejected(self):
-        import pytest
+    def test_later_versions_add_files_beside_the_earlier_ones(self):
+        """Append-only: a version's files are named for it, so none are overwritten."""
+        first = split_partition_path_in_repo("test", "journal", "pbio", 1, 0)
+        later = split_partition_path_in_repo("test", "journal", "pbio", 2, 0)
+        assert first != later
+        assert Path(first).parent == Path(later).parent
 
+    def test_chunks_within_a_version_are_numbered(self):
+        assert split_partition_path_in_repo("test", "journal", "pcbi", 1, 3).endswith(
+            "v001-00003.parquet"
+        )
+
+    def test_the_partition_column_name_comes_from_the_config(self):
+        assert (
+            split_partition_path_in_repo("test", "language", "pt", 1, 0)
+            == "test/language=pt/v001-00000.parquet"
+        )
+
+    def test_a_stratum_that_cannot_name_a_path_is_rejected(self):
         with pytest.raises(ValueError):
-            split_partition_path_in_repo("test", "a/b")
+            split_partition_path_in_repo("test", "journal", "a/b", 1, 0)
 
     def test_a_splits_published_files_are_found_across_partitions(self):
         files = [

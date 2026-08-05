@@ -1,15 +1,17 @@
-"""Publish a rendered corpus version: the split files, the manifest and the config.
+"""Publish a rendered corpus version: its new data files, the manifest and the config.
 
 The last of three steps. The cut selects and reads, rendering adds the PDFs, and this
-assembles what those produced with the previously published rows and publishes the
-result — data first, then the manifest and config, then a tag so a reader can pin the
-version immutably rather than trusting a branch to stay put.
+writes what they produced into the corpus repo — data first, then the manifest and config,
+then a tag so a reader can pin the version immutably rather than trusting a branch.
+
+A version only ever *adds* files. Nothing an earlier version published is rewritten, so
+growing the corpus uploads only what it grew by, and rows keep the bytes — and the rendered
+PDFs — they were published with. What constitutes a version is the manifest, not the layout.
 """
 
 import argparse
 import logging
 import sys
-import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -27,30 +29,33 @@ from sciencebeam_dataset_builder.archive_cut.layout import (
     PUBLISHED_DIRECTORY,
     RENDERED_DIRECTORY,
     SPLITS_DIRECTORY,
-    files_by_split,
     config_path_in_repo,
+    files_by_split,
     manifest_path_in_repo,
     published_split_paths,
     split_partition_path_in_repo,
     version_name,
-)
-from sciencebeam_dataset_builder.archive_cut.parquet_io import (
-    write_table_with_byte_sized_row_groups,
 )
 from sciencebeam_dataset_builder.archive_cut.manifest import (
     ManifestRow,
     read_manifest,
     write_manifest,
 )
+from sciencebeam_dataset_builder.archive_cut.parquet_io import (
+    DEFAULT_CHUNK_BYTES,
+    chunk_table,
+    write_table_with_byte_sized_row_groups,
+)
 from sciencebeam_dataset_builder.archive_cut.publish import (
     PreparedSplit,
     PublishError,
     check_failures_resolved,
+    check_manifest_is_covered,
     check_output_schema,
     config_with_exclusions,
     describe_publication,
     manifest_without_failures,
-    merge_split,
+    order_new_rows,
 )
 from sciencebeam_dataset_builder.archive_cut.render import RenderFailure
 from sciencebeam_dataset_builder.archive_cut.render_cli import read_failures
@@ -66,9 +71,8 @@ from sciencebeam_dataset_builder.archive_cut.upload import (
 LOGGER = logging.getLogger(__name__)
 
 # One commit per data file. Batching exists because one commit per file hit HTTP 429
-# during the archive build — but that was 151 shards, whereas a corpus has one file per
-# split. Here batching buys nothing and costs a great deal: both splits in a single commit
-# means a failure at 90% of an hours-long upload re-sends the file that had finished.
+# during the archive build — but that was 151 shards, whereas a chunk here is tens of MiB
+# on a link where that is minutes. A failure should cost one chunk, not the run.
 DEFAULT_DATA_FILES_PER_COMMIT = 1
 
 
@@ -86,33 +90,85 @@ def find_version_files(version_dir: Path) -> tuple[Path, Path]:
     return configs[0], manifest
 
 
-def prepare_splits(
-    config: CorpusConfig,
-    rows: list[ManifestRow],
-    version_dir: Path,
-    target: PublishTarget,
-    work_dir: Path,
+def prepare_new_rows(
+    config: CorpusConfig, rows: list[ManifestRow], version_dir: Path
 ) -> list[PreparedSplit]:
-    """Merge each split's new rows with those already published."""
+    """This version's new rows per split, in manifest order.
+
+    Only what rendering produced: everything else is already published, in files this run
+    will not touch.
+    """
     rendered = files_by_split(version_dir, RENDERED_DIRECTORY)
-    published = target.list_files()
     prepared: list[PreparedSplit] = []
     for split in config.splits:
-        wanted = [row for row in rows if row.split == split]
-        if not wanted:
-            LOGGER.info("Split %r has no documents; nothing to publish for it", split)
+        table = _read_shard_files(rendered.get(split, []))
+        if table is None:
+            LOGGER.info("Split %r has no new documents", split)
             continue
-        added = _read_shard_files(rendered.get(split, []))
-        previous = _fetch_previous(target, split, work_dir, published)
-        if previous is None and added is None:
-            raise PublishError(
-                f"split {split!r} lists {len(wanted)} document(s) but neither new nor "
-                f"published rows were found for it"
-            )
-        table = merge_split(split, previous, added, rows, config.id_column)
-        check_output_schema(split, table, config)
-        prepared.append(PreparedSplit(split=split, table=table))
+        ordered = order_new_rows(split, table, rows, config.id_column)
+        check_output_schema(split, ordered, config)
+        prepared.append(PreparedSplit(split=split, table=ordered))
     return prepared
+
+
+def _read_shard_files(paths: Sequence[Path]) -> pa.Table | None:
+    """Concatenate the per-shard files a cut and render produced for one split."""
+    tables = [pq.read_table(path) for path in paths]
+    non_empty = [table for table in tables if table.num_rows]
+    return pa.concat_tables(non_empty) if non_empty else None
+
+
+def published_ids(target: PublishTarget, config: CorpusConfig) -> set[str]:
+    """The ids already published, read a column at a time rather than downloaded.
+
+    Only the id column of each published file is fetched — kilobytes — which is what makes
+    checking the manifest against reality affordable on every publish.
+    """
+    files = target.list_files()
+    found: set[str] = set()
+    for split in config.splits:
+        for path in published_split_paths(files, split):
+            table = target.open_parquet(path).read(columns=[config.id_column])
+            found.update(
+                str(value) for value in table.column(config.id_column).to_pylist()
+            )
+    return found
+
+
+def write_published(
+    prepared: list[PreparedSplit],
+    config: CorpusConfig,
+    rows: list[ManifestRow],
+    output_dir: Path,
+    chunk_bytes: int = DEFAULT_CHUNK_BYTES,
+) -> list[FileToPublish]:
+    """Write this version's new files locally, so they can be inspected before upload."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    files: list[FileToPublish] = []
+    for item in prepared:
+        for stratum, subset in _by_stratum(item.table, config.stratum_column):
+            # Hive convention: the stratum lives in the path, so it is not stored in the
+            # file. Readers of the split reconstruct it — pyarrow and datasets both do.
+            without_stratum = subset.drop_columns([config.stratum_column])
+            for index, chunk in enumerate(chunk_table(without_stratum, chunk_bytes)):
+                path_in_repo = split_partition_path_in_repo(
+                    item.split, config.stratum_column, stratum, config.version, index
+                )
+                path = output_dir / path_in_repo
+                groups = write_table_with_byte_sized_row_groups(chunk, path)
+                LOGGER.info(
+                    "%s: %d document(s), %d row group(s), %.1f MiB",
+                    path_in_repo,
+                    chunk.num_rows,
+                    groups,
+                    path.stat().st_size / 1024**2,
+                )
+                files.append(FileToPublish(local_path=path, path_in_repo=path_in_repo))
+
+    splits_dir = output_dir / SPLITS_DIRECTORY
+    write_manifest(splits_dir / f"{version_name(config)}.csv", rows)
+    dump_config(config, splits_dir / f"{version_name(config)}.yml")
+    return files
 
 
 def _by_stratum(table: pa.Table, stratum_column: str) -> list[tuple[str, pa.Table]]:
@@ -126,68 +182,6 @@ def _by_stratum(table: pa.Table, stratum_column: str) -> list[tuple[str, pa.Tabl
     ]
 
 
-def _read_shard_files(paths: Sequence[Path]) -> pa.Table | None:
-    """Concatenate this version's per-shard files for one split.
-
-    The cut and the renderer write one file per shard so an interrupted run resumes;
-    publishing is where they become the single file per split that readers name.
-    """
-    tables = [pq.read_table(path) for path in paths]
-    non_empty = [table for table in tables if table.num_rows]
-    return pa.concat_tables(non_empty) if non_empty else None
-
-
-def _read_if_present(path: Path) -> pa.Table | None:
-    if not path.exists():
-        return None
-    table = pq.read_table(path)
-    return table if table.num_rows else None
-
-
-def _fetch_previous(
-    target: PublishTarget, split: str, work_dir: Path, published: Sequence[str]
-) -> pa.Table | None:
-    """Retrieve every already-published file for one split, partitioned as they are."""
-    paths = published_split_paths(published, split)
-    if not paths:
-        return None
-    LOGGER.info(
-        "Carrying forward %d already-published file(s) for split %r", len(paths), split
-    )
-    fetched = [target.fetch(path, work_dir) for path in paths]
-    return _read_shard_files([p for p in fetched if p is not None])
-
-
-def write_published(
-    prepared: list[PreparedSplit],
-    config: CorpusConfig,
-    rows: list[ManifestRow],
-    output_dir: Path,
-) -> list[FileToPublish]:
-    """Write what will be published locally, so it can be inspected before upload."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    files: list[FileToPublish] = []
-    for item in prepared:
-        for stratum, subset in _by_stratum(item.table, config.stratum_column):
-            path_in_repo = split_partition_path_in_repo(item.split, stratum)
-            path = output_dir / path_in_repo
-            groups = write_table_with_byte_sized_row_groups(subset, path)
-            LOGGER.info(
-                "%s: %d document(s) in %d row group(s)",
-                path_in_repo,
-                subset.num_rows,
-                groups,
-            )
-            files.append(FileToPublish(local_path=path, path_in_repo=path_in_repo))
-
-    splits_dir = output_dir / SPLITS_DIRECTORY
-    manifest_path = splits_dir / f"{version_name(config)}.csv"
-    config_path = splits_dir / f"{version_name(config)}.yml"
-    write_manifest(manifest_path, rows)
-    dump_config(config, config_path)
-    return files
-
-
 def publish(
     target: PublishTarget,
     config: CorpusConfig,
@@ -196,7 +190,7 @@ def publish(
     batch_size: int = DEFAULT_DATA_FILES_PER_COMMIT,
     with_tag: bool = True,
 ) -> None:
-    """Data first in batched commits, then the manifest and config, then the tag."""
+    """Data first, then the manifest and config, then the tag."""
     name = version_name(config)
     for index, batch in enumerate(batched(data_files, batch_size), start=1):
         target.publish(batch, f"Add {name} data ({index}): {len(batch)} file(s)")
@@ -259,12 +253,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Assemble everything into <version_dir>/dry-run without uploading.",
     )
     parser.add_argument(
+        "--chunk-bytes",
+        type=int,
+        default=DEFAULT_CHUNK_BYTES,
+        metavar="BYTES",
+        help=f"Payload bytes per data file (default: {DEFAULT_CHUNK_BYTES}).",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=DEFAULT_DATA_FILES_PER_COMMIT,
         help=(
             f"Data files per commit (default: {DEFAULT_DATA_FILES_PER_COMMIT}). Raise it "
-            f"only for a corpus with many small split files."
+            f"only for a corpus with many small files."
         ),
     )
     parser.add_argument(
@@ -315,27 +316,39 @@ def _run(args: argparse.Namespace) -> None:
     target = build_target(args, config)
     output_dir = args.version_dir / PUBLISHED_DIRECTORY
 
-    with tempfile.TemporaryDirectory(prefix="archive-cut-publish-") as work:
-        prepared = prepare_splits(
-            config=config,
-            rows=kept,
-            version_dir=args.version_dir,
-            target=target,
-            work_dir=Path(work),
+    prepared = prepare_new_rows(config, kept, args.version_dir)
+    already = published_ids(target, config)
+    new = {
+        str(value)
+        for item in prepared
+        for value in item.table.column(config.id_column).to_pylist()
+    }
+    check_manifest_is_covered(kept, already, new)
+    if already:
+        LOGGER.info(
+            "%d document(s) already published by earlier versions; %d being added",
+            len(already),
+            len(new),
         )
-        data_files = write_published(prepared, published_config, kept, output_dir)
-        publish(
-            target=target,
-            config=published_config,
-            data_files=data_files,
-            output_dir=output_dir,
-            batch_size=args.batch_size,
-            with_tag=not args.no_tag,
-        )
+
+    data_files = write_published(
+        prepared, published_config, kept, output_dir, chunk_bytes=args.chunk_bytes
+    )
+    publish(
+        target=target,
+        config=published_config,
+        data_files=data_files,
+        output_dir=output_dir,
+        batch_size=args.batch_size,
+        with_tag=not args.no_tag,
+    )
 
     for line in describe_publication(prepared, dropped, failures):
         print(line)
-    print(f"Published {version_name(published_config)}")
+    print(
+        f"Published {version_name(published_config)}: {len(data_files)} new data file(s), "
+        f"{len(kept)} document(s) in the manifest"
+    )
 
 
 if __name__ == "__main__":

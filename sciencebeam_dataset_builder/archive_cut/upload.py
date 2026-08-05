@@ -16,6 +16,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Protocol
 
+import pyarrow.parquet as pq
+
 LOGGER = logging.getLogger(__name__)
 
 DEFAULT_BATCH_SIZE = 16
@@ -50,6 +52,13 @@ class PublishTarget(Protocol):
     def list_files(self) -> list[str]:
         """Every path already published, so the latest version can be found."""
 
+    def open_parquet(self, path_in_repo: str) -> pq.ParquetFile:
+        """Open a published file for reading, ideally without fetching all of it.
+
+        Checking the manifest against what is published needs only the id column, which is
+        kilobytes — so this must not be `fetch`, which would pull whole files.
+        """
+
 
 class LocalPublishTarget:
     """Publish into a directory — a dry run, and what the tests use."""
@@ -75,6 +84,9 @@ class LocalPublishTarget:
     def fetch(self, path_in_repo: str, into: Path) -> Path | None:
         candidate = self.directory / path_in_repo
         return candidate if candidate.exists() else None
+
+    def open_parquet(self, path_in_repo: str) -> pq.ParquetFile:
+        return pq.ParquetFile(self.directory / path_in_repo)
 
     def list_files(self) -> list[str]:
         if not self.directory.is_dir():
@@ -207,6 +219,17 @@ class HfPublishTarget:
                 return []
             raise
         return files
+
+    def open_parquet(self, path_in_repo: str) -> pq.ParquetFile:
+        from huggingface_hub import HfFileSystem
+
+        # Our own instance, so nothing else in the process can close the client under an
+        # open file.
+        fs = HfFileSystem(skip_instance_cache=True)
+        revision = self.revision or "main"
+        return pq.ParquetFile(
+            fs.open(f"datasets/{self.repo_id}@{revision}/{path_in_repo}", "rb")
+        )
 
     def _with_retries(self, action: Callable[[], object], what: str) -> None:
         last_error: Exception | None = None

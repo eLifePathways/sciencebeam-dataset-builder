@@ -218,12 +218,28 @@ def rendered_table(version_dir: Path, split: str) -> pa.Table:
 def published_files(repo: Path, split: str) -> list[Path]:
     """Every published data file for one split, across its partitions."""
     directory = repo / split
-    return sorted(directory.glob("*.parquet")) if directory.is_dir() else []
+    return sorted(directory.glob("*/*.parquet")) if directory.is_dir() else []
 
 
 def published_table(repo: Path, split: str) -> pa.Table:
-    """One published split's rows, concatenated across its partitions."""
-    tables = [pq.read_table(path) for path in published_files(repo, split)]
-    if not tables:
+    """One published split, read as a consumer would: the whole partitioned directory.
+
+    Reading the directory is what reconstructs the stratum column from the path, the Hive
+    convention being that a partition column is not stored in the files.
+    """
+    directory = repo / split
+    if not published_files(repo, split):
         raise AssertionError(f"nothing published for split {split!r} in {repo}")
-    return pa.concat_tables(tables)
+    return pq.read_table(directory)
+
+
+def published_partition(
+    repo: Path, split: str, stratum_column: str, stratum: str
+) -> pa.Table:
+    """One stratum's published rows, read the way a consumer would.
+
+    The split root with a filter, not the leaf directory: pyarrow infers Hive keys relative
+    to the root it is given, so pointing at the leaf loses the very column the path
+    encodes. Filtering on the partition key prunes by path, so other strata are not read.
+    """
+    return pq.read_table(repo / split, filters=[(stratum_column, "==", stratum)])
