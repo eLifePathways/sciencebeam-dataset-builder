@@ -114,12 +114,12 @@ class TestFailureFileFormat:
         path = tmp_path / FAILURES_FILENAME
         path.write_text(
             "id,reason\n"
-            "journal.pclm.0000243,converter timed out after 300s\n"
+            "alpha-000-hangs,converter timed out after 300s\n"
             "other,converter exited 3\n",
             encoding="utf-8",
         )
         assert [(f.id, f.retryable) for f in read_failures(path)] == [
-            ("journal.pclm.0000243", True),
+            ("alpha-000-hangs", True),
             ("other", False),
         ]
 
@@ -218,14 +218,14 @@ class TestPublishRefusesUnresolvedFailures:
             check_failures_resolved(
                 [
                     RenderFailure(
-                        id="journal.pclm.0000243",
+                        id="alpha-000-hangs",
                         reason="converter timed out after 300s",
                         retryable=True,
                     )
                 ]
             )
         message = str(exc_info.value)
-        assert "journal.pclm.0000243" in message
+        assert "alpha-000-hangs" in message
         assert "--retry-failed" in message
         assert "--exclude-unresolved" in message
 

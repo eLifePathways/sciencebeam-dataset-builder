@@ -46,19 +46,19 @@ class TestVersionNaming:
 class TestRepoPaths:
     def test_a_split_is_hive_partitioned_and_version_stamped(self):
         assert (
-            split_partition_path_in_repo("test", "journal", "pbio", 1, 0)
-            == "test/journal=pbio/v001-00000.parquet"
+            split_partition_path_in_repo("test", "journal", "alpha", 1, 0)
+            == "test/journal=alpha/v001-00000.parquet"
         )
 
     def test_later_versions_add_files_beside_the_earlier_ones(self):
         """Append-only: a version's files are named for it, so none are overwritten."""
-        first = split_partition_path_in_repo("test", "journal", "pbio", 1, 0)
-        later = split_partition_path_in_repo("test", "journal", "pbio", 2, 0)
+        first = split_partition_path_in_repo("test", "journal", "alpha", 1, 0)
+        later = split_partition_path_in_repo("test", "journal", "alpha", 2, 0)
         assert first != later
         assert Path(first).parent == Path(later).parent
 
     def test_chunks_within_a_version_are_numbered(self):
-        assert split_partition_path_in_repo("test", "journal", "pcbi", 1, 3).endswith(
+        assert split_partition_path_in_repo("test", "journal", "beta", 1, 3).endswith(
             "v001-00003.parquet"
         )
 
@@ -74,17 +74,19 @@ class TestRepoPaths:
 
     def test_a_splits_published_files_are_found_across_partitions(self):
         files = [
-            "test/pbio.parquet",
-            "test/pcbi.parquet",
-            "validation/pbio.parquet",
+            "test/alpha.parquet",
+            "test/beta.parquet",
+            "validation/alpha.parquet",
             "splits/sample-v001.csv",
             "README.md",
         ]
         assert published_split_paths(files, "test") == [
-            "test/pbio.parquet",
-            "test/pcbi.parquet",
+            "test/alpha.parquet",
+            "test/beta.parquet",
         ]
-        assert published_split_paths(files, "validation") == ["validation/pbio.parquet"]
+        assert published_split_paths(files, "validation") == [
+            "validation/alpha.parquet"
+        ]
 
     def test_a_split_with_nothing_published_finds_nothing(self):
         assert published_split_paths(["splits/sample-v001.csv"], "test") == []
@@ -114,9 +116,10 @@ class TestPublishedVersions:
         assert latest_published_version(files, "other") == 9
 
     def test_a_corpus_whose_name_contains_a_hyphen_is_matched_exactly(self):
-        files = ["splits/plos-rsrch-2064-v002.yml"]
-        assert latest_published_version(files, "plos-rsrch-2064") == 2
-        assert latest_published_version(files, "plos") is None
+        files = ["splits/alpha-beta-gamma-v002.yml"]
+        assert latest_published_version(files, "alpha-beta-gamma") == 2
+        # A prefix of the name is a different corpus, not this one.
+        assert latest_published_version(files, "alpha") is None
 
     def test_nothing_published_reports_none(self):
         assert latest_published_version(["test.parquet"], "sample") is None
