@@ -10,7 +10,14 @@ import dataclasses
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-MANIFEST_FIELDS = ["id", "stratum", "rank", "split"]
+# Only `split` is inherent to the manifest. The other three name the same things the
+# data files do, so the manifest joins to the data without a reader having to know that
+# `stratum` and `journal` are the same field.
+SPLIT_FIELD = "split"
+
+
+def manifest_fields(id_column: str, stratum_column: str, rank_column: str) -> list[str]:
+    return [id_column, stratum_column, rank_column, SPLIT_FIELD]
 
 
 class ManifestError(ValueError):
@@ -27,30 +34,53 @@ class ManifestRow:
     split: str
 
 
-def read_manifest(path: Path) -> list[ManifestRow]:
+def read_manifest(
+    path: Path,
+    id_column: str = "id",
+    stratum_column: str = "stratum",
+    rank_column: str = "rank",
+) -> list[ManifestRow]:
+    """Read a manifest whose columns are named as the corpus names them."""
+    fields = manifest_fields(id_column, stratum_column, rank_column)
     with path.open(encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
-        missing = sorted(set(MANIFEST_FIELDS) - set(reader.fieldnames or []))
+        present = list(reader.fieldnames or [])
+        missing = [field for field in fields if field not in present]
         if missing:
-            raise ManifestError(f"{path} is missing column(s): {', '.join(missing)}")
-        rows = [_row_from_dict(row, path) for row in reader]
+            raise ManifestError(
+                f"{path} is missing column(s) {', '.join(missing)}; it has "
+                f"{', '.join(present)}. A manifest names its columns as the corpus "
+                f"does, so a manifest written for a different configuration will not "
+                f"read."
+            )
+        rows = [
+            _row_from_dict(row, path, id_column, stratum_column, rank_column)
+            for row in reader
+        ]
     _check_ids_unique(rows, path)
     return rows
 
 
-def _row_from_dict(row: dict[str, str | None], path: Path) -> ManifestRow:
-    rank = (row.get("rank") or "").strip()
+def _row_from_dict(
+    row: dict[str, str | None],
+    path: Path,
+    id_column: str,
+    stratum_column: str,
+    rank_column: str,
+) -> ManifestRow:
+    rank = (row.get(rank_column) or "").strip()
     try:
         parsed_rank = int(rank)
     except ValueError as exc:
         raise ManifestError(
-            f"{path}: rank {rank!r} for id {row.get('id')!r} is not an integer"
+            f"{path}: {rank_column} {rank!r} for {id_column} "
+            f"{row.get(id_column)!r} is not an integer"
         ) from exc
     return ManifestRow(
-        id=(row.get("id") or "").strip(),
-        stratum=(row.get("stratum") or "").strip(),
+        id=(row.get(id_column) or "").strip(),
+        stratum=(row.get(stratum_column) or "").strip(),
         rank=parsed_rank,
-        split=(row.get("split") or "").strip(),
+        split=(row.get(SPLIT_FIELD) or "").strip(),
     )
 
 
@@ -66,16 +96,30 @@ def _check_ids_unique(rows: Sequence[ManifestRow], path: Path) -> None:
         seen[row.id] = row.split
 
 
-def write_manifest(path: Path, rows: Iterable[ManifestRow]) -> None:
+def write_manifest(
+    path: Path,
+    rows: Iterable[ManifestRow],
+    id_column: str = "id",
+    stratum_column: str = "stratum",
+    rank_column: str = "rank",
+) -> None:
     """Write the manifest in (stratum, rank) order, so versions diff readably."""
     ordered = sorted(rows, key=lambda row: (row.stratum, row.rank))
     _check_ids_unique(ordered, path)
+    fields = manifest_fields(id_column, stratum_column, rank_column)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=MANIFEST_FIELDS)
+        writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
         for row in ordered:
-            writer.writerow(dataclasses.asdict(row))
+            writer.writerow(
+                {
+                    id_column: row.id,
+                    stratum_column: row.stratum,
+                    rank_column: row.rank,
+                    SPLIT_FIELD: row.split,
+                }
+            )
 
 
 def ids_by_stratum_split(

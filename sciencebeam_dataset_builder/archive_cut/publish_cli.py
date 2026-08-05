@@ -166,7 +166,13 @@ def write_published(
                 files.append(FileToPublish(local_path=path, path_in_repo=path_in_repo))
 
     splits_dir = output_dir / SPLITS_DIRECTORY
-    write_manifest(splits_dir / f"{version_name(config)}.csv", rows)
+    write_manifest(
+        splits_dir / f"{version_name(config)}.csv",
+        rows,
+        id_column=config.id_column,
+        stratum_column=config.stratum_column,
+        rank_column=config.rank_column,
+    )
     dump_config(config, splits_dir / f"{version_name(config)}.yml")
     return files
 
@@ -307,7 +313,12 @@ def main(argv: list[str] | None = None) -> None:
 def _run(args: argparse.Namespace) -> None:
     config_path, manifest_path = find_version_files(args.version_dir)
     config = load_config(config_path)
-    rows = read_manifest(manifest_path)
+    rows = read_manifest(
+        manifest_path,
+        id_column=config.id_column,
+        stratum_column=config.stratum_column,
+        rank_column=config.rank_column,
+    )
     failures: list[RenderFailure] = read_failures(args.version_dir / FAILURES_FILENAME)
 
     check_failures_resolved(failures, accept_unresolved=args.exclude_unresolved)

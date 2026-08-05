@@ -3,7 +3,6 @@
 import pytest
 
 from sciencebeam_dataset_builder.archive_cut.manifest import (
-    MANIFEST_FIELDS,
     ManifestError,
     ManifestRow,
     ids_by_stratum_split,
@@ -33,11 +32,47 @@ class TestRoundTrip:
             "beta-000",
         ]
 
-    def test_the_header_is_the_documented_field_list(self, tmp_path):
+    def test_the_header_names_the_columns_the_corpus_names(self, tmp_path):
+        """So the manifest joins to the data without knowing stratum means journal."""
         path = tmp_path / "sample-v001.csv"
-        write_manifest(path, ROWS)
+        write_manifest(
+            path, ROWS, id_column="id", stratum_column="journal", rank_column="rank"
+        )
         header = path.read_text(encoding="utf-8").splitlines()[0]
-        assert header == ",".join(MANIFEST_FIELDS)
+        assert header == "id,journal,rank,split"
+
+    def test_it_reads_back_under_those_names(self, tmp_path):
+        path = tmp_path / "sample-v001.csv"
+        write_manifest(path, ROWS, stratum_column="journal")
+        read = read_manifest(path, stratum_column="journal")
+        assert {row.stratum for row in read} == {"alpha", "beta"}
+
+    def test_a_manifest_named_for_another_configuration_is_refused(self, tmp_path):
+        path = tmp_path / "sample-v001.csv"
+        write_manifest(path, ROWS, stratum_column="journal")
+        with pytest.raises(ManifestError) as exc_info:
+            read_manifest(path, stratum_column="language")
+        assert "language" in str(exc_info.value)
+        assert "journal" in str(exc_info.value)
+
+    def test_every_configured_name_is_used(self, tmp_path):
+        path = tmp_path / "sample-v001.csv"
+        write_manifest(
+            path,
+            ROWS,
+            id_column="ppr_id",
+            stratum_column="language",
+            rank_column="position",
+        )
+        header = path.read_text(encoding="utf-8").splitlines()[0]
+        assert header == "ppr_id,language,position,split"
+        read = read_manifest(
+            path,
+            id_column="ppr_id",
+            stratum_column="language",
+            rank_column="position",
+        )
+        assert len(read) == len(ROWS)
 
     def test_the_parent_directory_is_created(self, tmp_path):
         path = tmp_path / "splits" / "sample-v001.csv"

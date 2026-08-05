@@ -385,7 +385,14 @@ def _resolve_previous(
 
     if config_path is not None:
         check_previous_config(config, config_path)
-    return read_manifest(manifest_path) if manifest_path is not None else []
+    if manifest_path is None:
+        return []
+    return read_manifest(
+        manifest_path,
+        id_column=config.id_column,
+        stratum_column=config.stratum_column,
+        rank_column=config.rank_column,
+    )
 
 
 def _run(args: argparse.Namespace) -> None:
@@ -420,7 +427,13 @@ def _run(args: argparse.Namespace) -> None:
         output_dir=args.output_dir,
     )
     name = version_name(config)
-    write_manifest(args.output_dir / f"{name}.csv", allocation.rows)
+    write_manifest(
+        args.output_dir / f"{name}.csv",
+        allocation.rows,
+        id_column=config.id_column,
+        stratum_column=config.stratum_column,
+        rank_column=config.rank_column,
+    )
     dump_config(with_recorded_revision(config, source), args.output_dir / f"{name}.yml")
 
     for split in config.splits:
