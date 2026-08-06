@@ -220,6 +220,31 @@ def publish(
         target.tag(name, f"Corpus {config.name} version {config.version}")
 
 
+def build_verify_target(
+    args: argparse.Namespace, config: CorpusConfig, writing_to: PublishTarget
+) -> PublishTarget:
+    """Where to read already-published ids from, which is not always where we write.
+
+    A dry run writes locally but must check against the real repo: a version after the
+    first adds only its own documents, so verifying against an empty directory would
+    report every previously published document as missing. Checking the manifest against
+    reality is most of what a dry run is for.
+
+    `--target-dir` is different: it stands in for the repo entirely, so it is both.
+    """
+    if not args.dry_run:
+        return writing_to
+    repo_id = config.target_repo_id
+    if not repo_id:
+        LOGGER.warning(
+            "Dry run with no target.repo_id in the config, so nothing can be checked "
+            "against what is already published"
+        )
+        return writing_to
+    LOGGER.info("Checking against what is already published in %s", repo_id)
+    return HfPublishTarget(repo_id)
+
+
 def build_target(args: argparse.Namespace, config: CorpusConfig) -> PublishTarget:
     if args.dry_run or args.target_dir:
         directory = args.target_dir or (args.version_dir / "dry-run")
@@ -328,7 +353,7 @@ def _run(args: argparse.Namespace) -> None:
     output_dir = args.version_dir / PUBLISHED_DIRECTORY
 
     prepared = prepare_new_rows(config, kept, args.version_dir)
-    already = published_ids(target, config)
+    already = published_ids(build_verify_target(args, config, target), config)
     new = {
         str(value)
         for item in prepared

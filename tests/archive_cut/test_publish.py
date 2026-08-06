@@ -26,6 +26,11 @@ from sciencebeam_dataset_builder.archive_cut.upload import (
     batched,
 )
 
+from sciencebeam_dataset_builder.archive_cut.config import (
+    config_from_dict,
+    config_to_dict,
+)
+
 from tests.archive_cut._helpers import archive_config
 
 SPLITS = ["test", "validation"]
@@ -275,3 +280,70 @@ class TestLocalPublishTarget:
 class TestUploadErrorType:
     def test_it_is_a_runtime_error(self):
         assert issubclass(UploadError, RuntimeError)
+
+
+class TestWhereAlreadyPublishedIdsAreRead:
+    """A dry run writes locally but must check against the repo, or a version after the
+    first reports every previously published document as missing."""
+
+    def _args(self, **kwargs):
+        import argparse
+
+        return argparse.Namespace(
+            dry_run=False, target_dir=None, target_repo=None, **kwargs
+        )
+
+    def test_a_normal_publish_checks_where_it_writes(self, tmp_path):
+        from sciencebeam_dataset_builder.archive_cut.publish_cli import (
+            build_verify_target,
+        )
+
+        writing_to = LocalPublishTarget(tmp_path / "repo")
+        config = archive_config(splits=SPLITS, default={"test": 1, "validation": 0})
+        assert build_verify_target(self._args(), config, writing_to) is writing_to
+
+    def test_target_dir_stands_in_for_the_repo_entirely(self, tmp_path):
+        from sciencebeam_dataset_builder.archive_cut.publish_cli import (
+            build_verify_target,
+        )
+
+        writing_to = LocalPublishTarget(tmp_path / "repo")
+        config = archive_config(splits=SPLITS, default={"test": 1, "validation": 0})
+        args = self._args()
+        args.target_dir = tmp_path / "repo"
+        assert build_verify_target(args, config, writing_to) is writing_to
+
+    def test_a_dry_run_without_a_configured_repo_falls_back(self, tmp_path):
+        from sciencebeam_dataset_builder.archive_cut.publish_cli import (
+            build_verify_target,
+        )
+
+        writing_to = LocalPublishTarget(tmp_path / "dry-run")
+        config = archive_config(splits=SPLITS, default={"test": 1, "validation": 0})
+        args = self._args()
+        args.dry_run = True
+        assert build_verify_target(args, config, writing_to) is writing_to
+
+    def test_a_dry_run_with_a_configured_repo_checks_the_repo(
+        self, tmp_path, monkeypatch
+    ):
+        from sciencebeam_dataset_builder.archive_cut import publish_cli
+
+        built = []
+
+        class FakeHfTarget:
+            def __init__(self, repo_id, **kwargs):
+                built.append(repo_id)
+
+        monkeypatch.setattr(publish_cli, "HfPublishTarget", FakeHfTarget)
+        writing_to = LocalPublishTarget(tmp_path / "dry-run")
+        data = config_to_dict(
+            archive_config(splits=SPLITS, default={"test": 1, "validation": 0})
+        )
+        data["target"] = {"repo_id": "owner/corpus"}
+        config = config_from_dict(data)
+        args = self._args()
+        args.dry_run = True
+        verify = publish_cli.build_verify_target(args, config, writing_to)
+        assert verify is not writing_to
+        assert built == ["owner/corpus"]
