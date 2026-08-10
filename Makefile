@@ -1,8 +1,9 @@
 INPUT_DIR ?= ./sciencebeam_dataset_builder/split_parquet_files/input_files
 OUTPUT_DIR ?= ./output
 SPLIT_OUTPUT_DIR ?= ./sciencebeam_dataset_builder/split_parquet_files/output_files
+CORPUS_OUTPUT_DIR ?= $(OUTPUT_DIR)/archive-cut
 
-.PHONY: install lint format run test build clean typecheck metadata split explore-scielo-preprints-jats split-parquet
+.PHONY: install lint format run test build clean typecheck metadata split explore-scielo-preprints-jats split-parquet archive-cut archive-cut-render archive-cut-publish
 
 install:
 	uv sync --frozen
@@ -50,6 +51,21 @@ scielo-preprints-hf-dataset:
 		$(OUTPUT_DIR)/scielo-preprints-split.csv \
 		$(OUTPUT_DIR)/scielo-preprints-metadata.jsonl \
 		$(OUTPUT_DIR)/scielo-preprints-hf-dataset $(RUN_ARGS)
+
+# Everything corpus-specific arrives via CONFIG, so no repo id, stratum value or
+# count belongs in this file. Pass extra flags through RUN_ARGS, e.g. --plan-only.
+archive-cut:
+	uv run -m sciencebeam_dataset_builder.archive_cut.cut_cli \
+		$(CONFIG) $(CORPUS_OUTPUT_DIR) $(RUN_ARGS)
+
+# Needs LibreOffice on PATH, which is why it is a step of its own.
+archive-cut-render:
+	uv run -m sciencebeam_dataset_builder.archive_cut.render_cli \
+		$(CORPUS_OUTPUT_DIR) $(RUN_ARGS)
+
+archive-cut-publish:
+	uv run -m sciencebeam_dataset_builder.archive_cut.publish_cli \
+		$(CORPUS_OUTPUT_DIR) $(RUN_ARGS)
 
 split-parquet:
 	uv run python sciencebeam_dataset_builder/split_parquet_files/split_parquet.py \
