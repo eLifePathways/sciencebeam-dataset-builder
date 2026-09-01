@@ -4,23 +4,29 @@ Reads each config's Parquet files from the Hub, conforms them to
 :data:`CANONICAL_SCHEMA` and writes them locally, mirroring the Hub layout so the
 result can be uploaded config by config.
 
+Downloads are kept as a pristine backup under `--input-dir`, untouched by
+normalisation. That gives a local copy of exactly what the Hub held before migration,
+and makes re-runs free: an input file that is already present is reused instead of
+re-downloaded.
+
 Split membership is preserved by construction: each input split file is normalised and
 written back as the same split file, so no row changes split. The `xml` and `pdf`
 payloads are compared before and after and the run fails if either differs.
 
     # what would change, reading only Parquet footers
-    python -m sciencebeam_dataset_builder.dataset.migrate_cli ./output/migrated --dry-run
+    python -m sciencebeam_dataset_builder.dataset.migrate_cli data/output/migrated --dry-run
 
-    # download, normalise and write locally
-    python -m sciencebeam_dataset_builder.dataset.migrate_cli ./output/migrated
+    # download to data/input (backup), normalise, write to data/output/migrated
+    python -m sciencebeam_dataset_builder.dataset.migrate_cli data/output/migrated
 
     # then, once the local result has been checked
-    python -m sciencebeam_dataset_builder.dataset.migrate_cli ./output/migrated --upload
+    python -m sciencebeam_dataset_builder.dataset.migrate_cli data/output/migrated --upload
 """
 
 import argparse
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -37,6 +43,9 @@ from sciencebeam_dataset_builder.dataset.split import SPLIT_NAMES
 LOGGER = logging.getLogger(__name__)
 
 DEFAULT_REPO_ID = "elifepathways/sciencebeam-v2-benchmarking"
+
+DEFAULT_INPUT_DIR = Path("data/input")
+DEFAULT_OUTPUT_DIR = Path("data/output/migrated")
 
 SPLIT_FILENAME = "{split}-00000-of-00001.parquet"
 
@@ -58,12 +67,30 @@ def read_hub_schema(repo_id: str, path: str) -> pa.Schema:
         return pq.ParquetFile(f).schema_arrow
 
 
-def read_hub_table(repo_id: str, path: str) -> pa.Table:
-    """Download a Hub Parquet file and return it as an Arrow table."""
+def fetch_to_input_dir(repo_id: str, path: str, input_dir: Path) -> Path:
+    """Return a local, pristine copy of a Hub Parquet file, downloading it if needed.
+
+    The copy under `input_dir` is the backup: it is never written to after this point,
+    so it always reflects what the Hub held when the migration ran. An existing copy is
+    reused, which makes repeat runs offline and free.
+    """
+    backup = input_dir / path
+    if backup.exists():
+        LOGGER.info("Reusing local input %s", backup)
+        return backup
+
     from huggingface_hub import hf_hub_download
 
-    local = hf_hub_download(repo_id, path, repo_type="dataset", token=_token())
-    return pq.read_table(local)
+    downloaded = hf_hub_download(repo_id, path, repo_type="dataset", token=_token())
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    # copy, not move: hf_hub_download hands back a path inside the shared HF cache.
+    shutil.copyfile(downloaded, backup)
+    return backup
+
+
+def read_hub_table(repo_id: str, path: str, input_dir: Path) -> pa.Table:
+    """Download (or reuse) a Hub Parquet file and return it as an Arrow table."""
+    return pq.read_table(fetch_to_input_dir(repo_id, path, input_dir))
 
 
 def _assert_payload_unchanged(before: pa.Table, after: pa.Table, label: str) -> None:
@@ -80,6 +107,7 @@ def _assert_payload_unchanged(before: pa.Table, after: pa.Table, label: str) -> 
 def migrate_source(
     source: Source,
     repo_id: str,
+    input_dir: Path,
     output_dir: Path,
     nullify_empty: bool,
 ) -> None:
@@ -90,8 +118,8 @@ def migrate_source(
     for split in SPLIT_NAMES:
         hub_path = _hub_path(source, split)
         label = f"{source.config}/{split}"
-        print(f"  {label}: downloading...", flush=True)
-        table = read_hub_table(repo_id, hub_path)
+        print(f"  {label}: fetching...", flush=True)
+        table = read_hub_table(repo_id, hub_path, input_dir)
 
         normalised = normalise_table(table, source, nullify_empty=nullify_empty)
         _assert_payload_unchanged(table, normalised, label)
@@ -149,7 +177,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "output_dir",
         type=Path,
-        help="Directory to write migrated Parquet files into, mirroring the Hub layout.",
+        nargs="?",
+        default=DEFAULT_OUTPUT_DIR,
+        help=(
+            "Directory to write migrated Parquet files into, mirroring the Hub layout "
+            f"(default: {DEFAULT_OUTPUT_DIR})."
+        ),
+    )
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=DEFAULT_INPUT_DIR,
+        help=(
+            "Directory holding pristine copies of the downloaded Parquet files, kept as "
+            f"a backup and reused on re-runs (default: {DEFAULT_INPUT_DIR})."
+        ),
     )
     parser.add_argument(
         "--repo-id",
@@ -213,7 +255,13 @@ def main(argv: list[str] | None = None) -> None:
         elif args.upload:
             upload_source(source, args.repo_id, args.output_dir)
         else:
-            migrate_source(source, args.repo_id, args.output_dir, args.nullify_empty)
+            migrate_source(
+                source,
+                args.repo_id,
+                args.input_dir,
+                args.output_dir,
+                args.nullify_empty,
+            )
 
     if args.dry_run:
         print("\nDry run only; nothing downloaded or written.")

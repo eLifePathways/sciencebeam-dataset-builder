@@ -276,6 +276,19 @@ class TestExtractArticleMeta:
         )
         assert _extract_article_meta(root)["pub_date"] == "2022-03-05"
 
+    def test_omits_an_absent_day_rather_than_zero_padding_it(self):
+        """An absent day must not become "00" - that is not a valid ISO 8601 date."""
+        root = self._meta(
+            '<pub-date pub-type="preprint"><year>2013</year><month>9</month></pub-date>'
+        )
+        assert _extract_article_meta(root)["pub_date"] == "2013-09"
+
+    def test_omits_an_absent_month_and_day(self):
+        root = self._meta(
+            '<pub-date pub-type="preprint"><year>2013</year></pub-date>'
+        )
+        assert _extract_article_meta(root)["pub_date"] == "2013"
+
     def test_extracts_license_url(self):
         root = self._meta(
             f'<permissions xmlns:ali="{ALI_NS}">'
