@@ -41,7 +41,15 @@ sciencebeam_dataset_builder/
   scielo_preprints/      source-specific retrieval and metadata extraction
 docs/
   dataset-card-body.md   the hand-written half of the published dataset card
+data/                    all dataset content - gitignored, never committed
+  input/                 pristine copies as downloaded from the Hub (backup)
+  output/                everything generated locally
+    migrated/            migrated Parquet, ready to upload
+    splits/              train/validation/test output from split-parquet
 ```
+
+The dataset is **private**. Nothing under `data/` may be committed - `.gitignore`
+covers the whole directory plus `*.parquet` / `*.pdf` / `*.jsonl` anywhere in the tree.
 
 Only SciELO Preprints has a builder here so far. When a second one lands, the
 source-specific packages should move under a `sources/` package.
@@ -77,9 +85,14 @@ as the same split file, so no row changes split.
 export HF_TOKEN=...
 
 make migrate-dry-run     # schema changes only, reads Parquet footers
-make migrate             # download, normalise, write under ./output/migrated
+make migrate             # download to data/input, normalise, write data/output/migrated
 make migrate-upload      # push the checked local result back to the Hub
 ```
+
+`make migrate` keeps every download under `data/input/` as a pristine backup, so you
+retain a local copy of exactly what the Hub held before migration. Those files are never
+written to again, and a re-run reuses them instead of downloading - so repeating a
+migration after a code change costs nothing and needs no network.
 
 Add `RUN_ARGS="--source biorxiv"` to work one source at a time.
 
