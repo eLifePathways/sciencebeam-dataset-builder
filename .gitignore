@@ -15,3 +15,14 @@ output*/
 .env
 .env.*
 !.env.example
+
+# Dataset content is NOT public - never commit it.
+# Source of truth is the private HF dataset; local copies are working files only.
+*.parquet
+*.pdf
+*.jsonl
+*.provenance.json
+input/
+input_files/
+output_files/
+sciencebeam_dataset_builder/split_parquet_files/
