@@ -1,8 +1,16 @@
-INPUT_DIR ?= ./sciencebeam_dataset_builder/split_parquet_files/input_files
+HF_DATASET ?= elifepathways/sciencebeam-v2-benchmarking
+INPUT_DIR ?= ./input
 OUTPUT_DIR ?= ./output
-SPLIT_OUTPUT_DIR ?= ./sciencebeam_dataset_builder/split_parquet_files/output_files
+SPLIT_OUTPUT_DIR ?= $(OUTPUT_DIR)/splits
+MIGRATE_DIR ?= $(OUTPUT_DIR)/migrated
 
-.PHONY: install lint format run test build clean typecheck metadata split explore-scielo-preprints-jats split-parquet
+.PHONY: install lint format test typecheck \
+	explore-scielo-preprints-jats \
+	hf-login hf-logout \
+	scielo-preprints-retrieve scielo-preprints-metadata scielo-preprints-split \
+	scielo-preprints-hf-dataset scielo-preprints-upload-to-hf biorxiv-jats-upload-to-hf \
+	split-parquet dataset-card dataset-card-upload \
+	migrate-dry-run migrate migrate-upload
 
 install:
 	uv sync --frozen
@@ -51,20 +59,44 @@ scielo-preprints-hf-dataset:
 		$(OUTPUT_DIR)/scielo-preprints-metadata.jsonl \
 		$(OUTPUT_DIR)/scielo-preprints-hf-dataset $(RUN_ARGS)
 
+# Split one source's Parquet files into train/validation/test.
+# SOURCE is required, e.g. `make split-parquet SOURCE=biorxiv`.
 split-parquet:
-	uv run python sciencebeam_dataset_builder/split_parquet_files/split_parquet.py \
+	uv run -m sciencebeam_dataset_builder.dataset.split_parquet_cli \
 		--input-dir $(INPUT_DIR) \
-		--output-dir $(SPLIT_OUTPUT_DIR)
+		--output-dir $(SPLIT_OUTPUT_DIR) \
+		--source $(SOURCE) $(RUN_ARGS)
+
+# Regenerate the Hub dataset card from the canonical schema + docs/dataset-card-body.md.
+dataset-card:
+	uv run -m sciencebeam_dataset_builder.dataset.card_cli $(OUTPUT_DIR)/README.md
+
+dataset-card-upload:
+	uv run -m sciencebeam_dataset_builder.dataset.card_cli $(OUTPUT_DIR)/README.md \
+		--repo-id $(HF_DATASET) --upload
+
+# Bring the published subsets onto the canonical schema. Inspect, then upload.
+migrate-dry-run:
+	uv run -m sciencebeam_dataset_builder.dataset.migrate_cli $(MIGRATE_DIR) \
+		--repo-id $(HF_DATASET) --dry-run $(RUN_ARGS)
+
+migrate:
+	uv run -m sciencebeam_dataset_builder.dataset.migrate_cli $(MIGRATE_DIR) \
+		--repo-id $(HF_DATASET) $(RUN_ARGS)
+
+migrate-upload:
+	uv run -m sciencebeam_dataset_builder.dataset.migrate_cli $(MIGRATE_DIR) \
+		--repo-id $(HF_DATASET) --upload $(RUN_ARGS)
 
 scielo-preprints-upload-to-hf:
-	uv run hf upload elifepathways/sciencebeam-v2-benchmarking \
+	uv run hf upload $(HF_DATASET) \
 		$(OUTPUT_DIR)/scielo-preprints-hf-dataset \
 		scielo-preprints-jats \
 		--type dataset
 
 
 biorxiv-jats-upload-to-hf:
-	uv run hf upload elifepathways/sciencebeam-v2-benchmarking \
+	uv run hf upload $(HF_DATASET) \
 		$(OUTPUT_DIR)/biorxiv-jats-hf-dataset \
 		biorxiv-jats \
 		--type dataset
