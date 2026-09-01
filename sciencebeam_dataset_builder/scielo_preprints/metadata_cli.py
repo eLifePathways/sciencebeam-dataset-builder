@@ -167,7 +167,7 @@ def _load_provenance(xml_path: Path) -> dict[str, str]:
 
 
 def extract_metadata(xml_path: Path) -> dict[str, Any]:
-    ppr_id = xml_path.stem.replace("PPR_", "PPR", 1)
+    document_id = xml_path.stem.replace("PPR_", "PPR", 1)
     tree = ET.parse(xml_path)
     root = tree.getroot()
     language, language_raw = _extract_language(root)
@@ -175,7 +175,7 @@ def extract_metadata(xml_path: Path) -> dict[str, Any]:
     article_meta = _extract_article_meta(root)
     provenance = _load_provenance(xml_path)
     return {
-        "ppr_id": ppr_id,
+        "id": document_id,
         **article_meta,
         "article_type": article_type,
         "language": language,

@@ -323,11 +323,11 @@ class TestExtractArticleMeta:
 
 
 class TestExtractMetadata:
-    def test_returns_ppr_id_from_filename(self, tmp_path):
+    def test_returns_id_from_filename(self, tmp_path):
         xml_path = tmp_path / "PPR123.xml"
         _write_xml(xml_path, lang="pt")
         row = extract_metadata(xml_path)
-        assert row["ppr_id"] == "PPR123"
+        assert row["id"] == "PPR123"
 
     def test_returns_normalised_language(self, tmp_path):
         xml_path = tmp_path / "PPR1.xml"
@@ -466,7 +466,7 @@ class TestMain:
         main([str(tmp_path), str(out)])
         record = _read_jsonl(out)[0]
         assert set(record.keys()) == {
-            "ppr_id",
+            "id",
             "doi",
             "version",
             "article_type",
@@ -506,4 +506,4 @@ class TestMain:
         main([str(tmp_path), str(out)])
         records = _read_jsonl(out)
         assert len(records) == 1
-        assert records[0]["ppr_id"] == "PPR2"
+        assert records[0]["id"] == "PPR2"

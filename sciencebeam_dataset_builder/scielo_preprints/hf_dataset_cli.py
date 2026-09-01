@@ -6,27 +6,9 @@ Output layout (follows HF Parquet conventions):
         validation-00000-of-00001.parquet
         test-00000-of-00001.parquet
 
-Schema per row:
-    ppr_id                     : string        — document identifier (e.g. "PPR123456")
-    doi                        : string
-    version                    : string
-    title                      : string
-    authors                    : list<struct>  — name, orcid, affiliations
-    pub_date                   : string        — ISO 8601 date
-    license                    : string        — URL
-    keywords                   : list<string>
-    subject_heading            : string
-    subject_europepmc_category : string
-    article_type               : string
-    language                   : string        — normalised ISO 639-1 language code
-    language_raw               : string        — language as reported by source
-    xml_source_url             : string
-    xml_downloaded_at          : string        — ISO 8601 datetime
-    xml_ftfy_applied           : bool
-    pdf_source_url             : string
-    pdf_downloaded_at          : string        — ISO 8601 datetime
-    xml                        : string        — JATS XML content
-    pdf                        : binary        — PDF bytes
+Rows conform to :data:`sciencebeam_dataset_builder.dataset.schema.CANONICAL_SCHEMA`,
+which every source in the dataset shares. For this source `id` holds the EuropePMC
+preprint accession (e.g. `PPR123456`), since the JATS comes from EuropePMC.
 """
 
 import argparse
@@ -35,48 +17,41 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
+from sciencebeam_dataset_builder.dataset.schema import (
+    CANONICAL_SCHEMA,
+    SOURCES,
+    make_uid,
+)
+
 LOGGER = logging.getLogger(__name__)
+
+SOURCE = SOURCES["scielo_preprints"]
 
 # HuggingFace uses "validation", the split CSV uses "val".
 SPLIT_NAME_MAP = {"train": "train", "val": "validation", "test": "test"}
 
-AUTHOR_TYPE = pa.struct(
-    [
-        pa.field("name", pa.string()),
-        pa.field("orcid", pa.string()),
-        pa.field("affiliations", pa.list_(pa.string())),
-    ]
-)
-
-SCHEMA = pa.schema(
-    [
-        pa.field("ppr_id", pa.string()),
-        pa.field("doi", pa.string()),
-        pa.field("version", pa.string()),
-        pa.field("title", pa.string()),
-        pa.field("authors", pa.list_(AUTHOR_TYPE)),
-        pa.field("pub_date", pa.string()),
-        pa.field("license", pa.string()),
-        pa.field("keywords", pa.list_(pa.string())),
-        pa.field("subject_heading", pa.string()),
-        pa.field("subject_europepmc_category", pa.string()),
-        pa.field("article_type", pa.string()),
-        pa.field("language", pa.string()),
-        pa.field("language_raw", pa.string()),
-        pa.field("xml_source_url", pa.string()),
-        pa.field("xml_downloaded_at", pa.string()),
-        pa.field("xml_ftfy_applied", pa.bool_()),
-        pa.field("pdf_source_url", pa.string()),
-        pa.field("pdf_downloaded_at", pa.string()),
-        pa.field("xml", pa.string(), nullable=False),
-        pa.field("pdf", pa.binary(), nullable=False),
-    ]
+# Metadata fields copied straight across from the metadata JSONL.
+_TEXT_FIELDS = (
+    "doi",
+    "version",
+    "title",
+    "pub_date",
+    "license",
+    "subject_heading",
+    "subject_europepmc_category",
+    "article_type",
+    "language",
+    "language_raw",
+    "xml_source_url",
+    "xml_downloaded_at",
+    "pdf_source_url",
+    "pdf_downloaded_at",
 )
 
 
@@ -94,105 +69,71 @@ def _str(value: object) -> str:
     return str(value) if value is not None else ""
 
 
-def _build_split_batches(
+def _authors(meta: dict[str, object]) -> list[dict[str, object]]:
+    raw_authors = cast(list[dict[str, object]], meta.get("authors") or [])
+    return [
+        {
+            "name": _str(author.get("name")),
+            "orcid": _str(author.get("orcid")),
+            "affiliations": [
+                _str(affiliation)
+                for affiliation in cast(list[object], author.get("affiliations") or [])
+            ],
+        }
+        for author in raw_authors
+    ]
+
+
+def build_row(
+    document_id: str,
+    meta: dict[str, object],
+    xml: str,
+    pdf: bytes,
+) -> dict[str, Any]:
+    """Return one canonical-schema row."""
+    return {
+        "source": SOURCE.name,
+        "id": document_id,
+        "uid": make_uid(SOURCE.name, document_id),
+        "authors": _authors(meta),
+        "keywords": [
+            _str(keyword) for keyword in cast(list[object], meta.get("keywords") or [])
+        ],
+        "xml_format": SOURCE.xml_format,
+        "xml_ftfy_applied": bool(meta.get("xml_ftfy_applied")),
+        "xml": xml,
+        "pdf": pdf,
+        **{field: _str(meta.get(field)) for field in _TEXT_FIELDS},
+    }
+
+
+def _build_split_table(
     documents_dir: Path,
     split_rows: list[dict[str, object]],
     metadata_by_id: dict[str, dict[str, object]],
 ) -> pa.Table:
-    ppr_ids: list[str] = []
-    dois: list[str] = []
-    versions: list[str] = []
-    titles: list[str] = []
-    authors_list: list[list[dict[str, object]]] = []
-    pub_dates: list[str] = []
-    licenses: list[str] = []
-    keywords_list: list[list[str]] = []
-    subject_headings: list[str] = []
-    subject_europepmc_categories: list[str] = []
-    article_types: list[str] = []
-    languages: list[str] = []
-    languages_raw: list[str] = []
-    xml_source_urls: list[str] = []
-    xml_downloaded_ats: list[str] = []
-    xml_ftfy_applied_list: list[bool] = []
-    pdf_source_urls: list[str] = []
-    pdf_downloaded_ats: list[str] = []
-    xmls: list[str] = []
-    pdfs: list[bytes] = []
+    rows: list[dict[str, Any]] = []
 
     for row in tqdm(split_rows, unit=" docs", leave=False):
-        ppr_id = str(row["ppr_id"])
-        xml_path = documents_dir / f"{ppr_id}.xml"
-        pdf_path = documents_dir / f"{ppr_id}.pdf"
+        document_id = str(row["id"])
+        xml_path = documents_dir / f"{document_id}.xml"
+        pdf_path = documents_dir / f"{document_id}.pdf"
 
         if not xml_path.exists():
             raise FileNotFoundError(f"XML not found: {xml_path}")
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-        meta = metadata_by_id.get(ppr_id, {})
-        raw_authors = cast(list[dict[str, object]], meta.get("authors") or [])
-        authors: list[dict[str, object]] = [
-            {
-                "name": _str(a.get("name")),
-                "orcid": _str(a.get("orcid")),
-                "affiliations": [
-                    _str(af) for af in cast(list[object], a.get("affiliations") or [])
-                ],
-            }
-            for a in raw_authors
-        ]
-
-        ppr_ids.append(ppr_id)
-        dois.append(_str(meta.get("doi")))
-        versions.append(_str(meta.get("version")))
-        titles.append(_str(meta.get("title")))
-        authors_list.append(authors)
-        pub_dates.append(_str(meta.get("pub_date")))
-        licenses.append(_str(meta.get("license")))
-        keywords_list.append(
-            [_str(k) for k in cast(list[object], meta.get("keywords") or [])]
+        rows.append(
+            build_row(
+                document_id,
+                metadata_by_id.get(document_id, {}),
+                xml_path.read_text(encoding="utf-8"),
+                pdf_path.read_bytes(),
+            )
         )
-        subject_headings.append(_str(meta.get("subject_heading")))
-        subject_europepmc_categories.append(
-            _str(meta.get("subject_europepmc_category"))
-        )
-        article_types.append(_str(meta.get("article_type")))
-        languages.append(_str(meta.get("language")))
-        languages_raw.append(_str(meta.get("language_raw")))
-        xml_source_urls.append(_str(meta.get("xml_source_url")))
-        xml_downloaded_ats.append(_str(meta.get("xml_downloaded_at")))
-        xml_ftfy_applied_list.append(bool(meta.get("xml_ftfy_applied")))
-        pdf_source_urls.append(_str(meta.get("pdf_source_url")))
-        pdf_downloaded_ats.append(_str(meta.get("pdf_downloaded_at")))
-        xmls.append(xml_path.read_text(encoding="utf-8"))
-        pdfs.append(pdf_path.read_bytes())
 
-    return pa.table(
-        {
-            "ppr_id": ppr_ids,
-            "doi": dois,
-            "version": versions,
-            "title": titles,
-            "authors": pa.array(authors_list, type=pa.list_(AUTHOR_TYPE)),
-            "pub_date": pub_dates,
-            "license": licenses,
-            "keywords": keywords_list,
-            "subject_heading": subject_headings,
-            "subject_europepmc_category": subject_europepmc_categories,
-            "article_type": article_types,
-            "language": languages,
-            "language_raw": languages_raw,
-            "xml_source_url": xml_source_urls,
-            "xml_downloaded_at": xml_downloaded_ats,
-            "xml_ftfy_applied": xml_ftfy_applied_list,
-            "pdf_source_url": pdf_source_urls,
-            "pdf_downloaded_at": pdf_downloaded_ats,
-            "xml": xmls,
-            "pdf": pdfs,
-        },
-        schema=SCHEMA,
-    )
+    return pa.Table.from_pylist(rows, schema=CANONICAL_SCHEMA)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -202,17 +143,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "documents_dir",
         type=Path,
-        help="Directory containing PPR_*.xml and PPR_*.pdf files.",
+        help="Directory containing PPR*.xml and PPR*.pdf files.",
     )
     parser.add_argument(
         "split_csv",
         type=Path,
-        help="Split CSV produced by dataset_split_cli (columns: ppr_id, split).",
+        help="Split CSV produced by split_cli (columns: id, split).",
     )
     parser.add_argument(
         "metadata_jsonl",
         type=Path,
-        help="Metadata JSONL produced by scielo_preprints_metadata_cli.",
+        help="Metadata JSONL produced by metadata_cli.",
     )
     parser.add_argument(
         "output_dir",
@@ -233,7 +174,9 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     split_rows = _read_csv(args.split_csv)
-    metadata_by_id = {str(r["ppr_id"]): r for r in _read_jsonl(args.metadata_jsonl)}
+    metadata_by_id = {
+        str(record["id"]): record for record in _read_jsonl(args.metadata_jsonl)
+    }
 
     by_split: dict[str, list[dict[str, object]]] = {}
     for row in split_rows:
@@ -246,7 +189,7 @@ def main(argv: list[str] | None = None) -> None:
         out_path = args.output_dir / f"{hf_split}-00000-of-00001.parquet"
 
         print(f"Building {hf_split} ({len(rows)} docs)...")
-        table = _build_split_batches(args.documents_dir, rows, metadata_by_id)
+        table = _build_split_table(args.documents_dir, rows, metadata_by_id)
         pq.write_table(table, out_path, compression="snappy")
         size_mb = out_path.stat().st_size / 1024 / 1024
         print(f"  wrote {out_path.name}  ({len(table)} rows, {size_mb:.1f} MB)")
