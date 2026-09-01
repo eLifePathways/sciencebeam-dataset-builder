@@ -1,6 +1,11 @@
 HF_DATASET ?= elifepathways/sciencebeam-v2-benchmarking
-INPUT_DIR ?= ./input
-OUTPUT_DIR ?= ./output
+
+# All dataset content stays under DATA_DIR, which is gitignored - the dataset is
+# private and must never be committed. INPUT_DIR holds pristine downloads (backup);
+# everything generated goes under OUTPUT_DIR.
+DATA_DIR ?= ./data
+INPUT_DIR ?= $(DATA_DIR)/input
+OUTPUT_DIR ?= $(DATA_DIR)/output
 SPLIT_OUTPUT_DIR ?= $(OUTPUT_DIR)/splits
 MIGRATE_DIR ?= $(OUTPUT_DIR)/migrated
 
@@ -78,15 +83,15 @@ dataset-card-upload:
 # Bring the published subsets onto the canonical schema. Inspect, then upload.
 migrate-dry-run:
 	uv run -m sciencebeam_dataset_builder.dataset.migrate_cli $(MIGRATE_DIR) \
-		--repo-id $(HF_DATASET) --dry-run $(RUN_ARGS)
+		--input-dir $(INPUT_DIR) --repo-id $(HF_DATASET) --dry-run $(RUN_ARGS)
 
 migrate:
 	uv run -m sciencebeam_dataset_builder.dataset.migrate_cli $(MIGRATE_DIR) \
-		--repo-id $(HF_DATASET) $(RUN_ARGS)
+		--input-dir $(INPUT_DIR) --repo-id $(HF_DATASET) $(RUN_ARGS)
 
 migrate-upload:
 	uv run -m sciencebeam_dataset_builder.dataset.migrate_cli $(MIGRATE_DIR) \
-		--repo-id $(HF_DATASET) --upload $(RUN_ARGS)
+		--input-dir $(INPUT_DIR) --repo-id $(HF_DATASET) --upload $(RUN_ARGS)
 
 scielo-preprints-upload-to-hf:
 	uv run hf upload $(HF_DATASET) \
