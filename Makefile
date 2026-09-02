@@ -15,7 +15,7 @@ MIGRATE_DIR ?= $(OUTPUT_DIR)/migrated
 	scielo-preprints-retrieve scielo-preprints-metadata scielo-preprints-split \
 	scielo-preprints-hf-dataset scielo-preprints-upload-to-hf biorxiv-jats-upload-to-hf \
 	split-parquet dataset-card dataset-card-upload \
-	migrate-dry-run migrate migrate-upload
+	migrate-dry-run migrate verify migrate-upload
 
 install:
 	uv sync --frozen
@@ -88,6 +88,11 @@ migrate-dry-run:
 migrate:
 	uv run -m sciencebeam_dataset_builder.dataset.migrate_cli $(MIGRATE_DIR) \
 		--input-dir $(INPUT_DIR) --repo-id $(HF_DATASET) $(RUN_ARGS)
+
+# Prove the migration preserved the data, offline, before anything is uploaded.
+verify:
+	uv run -m sciencebeam_dataset_builder.dataset.verify_cli \
+		--input-dir $(INPUT_DIR) --output-dir $(MIGRATE_DIR) $(RUN_ARGS)
 
 migrate-upload:
 	uv run -m sciencebeam_dataset_builder.dataset.migrate_cli $(MIGRATE_DIR) \
