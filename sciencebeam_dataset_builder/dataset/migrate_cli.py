@@ -37,7 +37,11 @@ from sciencebeam_dataset_builder.dataset.normalise import (
     describe_changes,
     normalise_table,
 )
-from sciencebeam_dataset_builder.dataset.schema import SOURCES, Source
+from sciencebeam_dataset_builder.dataset.schema import (
+    CANONICAL_SOURCES,
+    SOURCES,
+    Source,
+)
 from sciencebeam_dataset_builder.dataset.split import SPLIT_NAMES
 
 LOGGER = logging.getLogger(__name__)
@@ -203,7 +207,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="append",
         choices=sorted(SOURCES),
         metavar="NAME",
-        help="Migrate only this source; repeatable. Default: all.",
+        help=(
+            "Migrate only this source; repeatable. Default: every source already on the "
+            "canonical schema. Non-canonical sources must be named explicitly."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -246,7 +253,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         sys.exit(1)
 
-    selected = [SOURCES[name] for name in (args.source or sorted(SOURCES))]
+    selected = [SOURCES[name] for name in (args.source or sorted(CANONICAL_SOURCES))]
 
     for source in selected:
         print(f"{source.config} ({source.name}):")

@@ -17,11 +17,18 @@ harvesting more documents into a source never reshuffles the documents already i
 | `scielo-preprints-jats` | 85 | 127 | 210 | 422 |
 | `scielo-preprints-metadata` | 485 | 235 | 280 | 1000 |
 
-`scielo-preprints-metadata` is the exception: it is roughly 49 / 24 / 28 rather than
-20 / 30 / 50, because only the documents it shares with `scielo-preprints-jats` carry a
-20 / 30 / 50 label and the rest were assigned by an earlier hash bucketing that used
-different fractions. Do not assume a uniform test fraction when pooling this config
-with the others.
+`scielo-preprints-metadata` is the exception twice over: it is roughly 49 / 24 / 28
+rather than 20 / 30 / 50, because only the documents it shares with
+`scielo-preprints-jats` carry a 20 / 30 / 50 label and the rest were assigned by an
+earlier hash bucketing that used different fractions; and it still carries the legacy
+three-column schema (see Schema exceptions). Do not assume a uniform test fraction when
+pooling this config with the others.
+
+Its metadata is not lost, only unextracted: `dc:title`, `dc:creator`, `dc:date`,
+`dc:identifier`, `dc:subject`, `dc:language` and `dc:type` all sit in its `xml` column.
+Migrating it is worth doing together with a Dublin Core extraction pass rather than
+before one, since migration alone would add three populated columns and seventeen null
+ones.
 
 ## SciELO Preprints
 
@@ -50,7 +57,7 @@ yet. Continuing the OAI harvest past 2480 would make metadata a true superset.
 
 ## Field coverage
 
-Only `scielo_preprints` has every metadata field populated, because EuropePMC supplies
+Applies to the `canonical` configs. Only `scielo_preprints` has every metadata field populated, because EuropePMC supplies
 retrieval provenance and a licence alongside the JATS. For the other sources
 `license`, `version`, `xml_source_url`, `pdf_source_url`, `xml_downloaded_at` and
 `pdf_downloaded_at` are null pending a backfill pass that re-derives them from the

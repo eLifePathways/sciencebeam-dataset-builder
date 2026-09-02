@@ -284,9 +284,7 @@ class TestExtractArticleMeta:
         assert _extract_article_meta(root)["pub_date"] == "2013-09"
 
     def test_omits_an_absent_month_and_day(self):
-        root = self._meta(
-            '<pub-date pub-type="preprint"><year>2013</year></pub-date>'
-        )
+        root = self._meta('<pub-date pub-type="preprint"><year>2013</year></pub-date>')
         assert _extract_article_meta(root)["pub_date"] == "2013"
 
     def test_extracts_license_url(self):

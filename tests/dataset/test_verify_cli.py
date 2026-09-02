@@ -1,5 +1,4 @@
 import pyarrow as pa
-import pytest
 
 from sciencebeam_dataset_builder.dataset.normalise import normalise_table
 from sciencebeam_dataset_builder.dataset.schema import SOURCES
@@ -34,7 +33,9 @@ class TestVerifySplit:
         migrated = normalise_table(original, BIORXIV)
         index = migrated.schema.get_field_index("xml")
         tampered = migrated.set_column(
-            index, "xml", pa.array(["<tampered/>", "<article>1</article>", "<article>2</article>"])
+            index,
+            "xml",
+            pa.array(["<tampered/>", "<article>1</article>", "<article>2</article>"]),
         )
         assert "xml payload changed" in verify_split(original, tampered, BIORXIV)
 

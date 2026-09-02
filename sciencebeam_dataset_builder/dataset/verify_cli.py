@@ -30,6 +30,7 @@ from sciencebeam_dataset_builder.dataset.migrate_cli import (
 from sciencebeam_dataset_builder.dataset.normalise import find_id_column
 from sciencebeam_dataset_builder.dataset.schema import (
     CANONICAL_SCHEMA,
+    CANONICAL_SOURCES,
     SOURCES,
     Source,
     make_uid,
@@ -153,7 +154,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="append",
         choices=sorted(SOURCES),
         metavar="NAME",
-        help="Verify only this source; repeatable. Default: all.",
+        help=(
+            "Verify only this source; repeatable. Default: every source already on the "
+            "canonical schema."
+        ),
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging.")
     return parser.parse_args(argv)
@@ -168,7 +172,7 @@ def main(argv: list[str] | None = None) -> None:
         stream=sys.stderr,
     )
 
-    selected = [SOURCES[name] for name in (args.source or sorted(SOURCES))]
+    selected = [SOURCES[name] for name in (args.source or sorted(CANONICAL_SOURCES))]
 
     total_rows = 0
     total_failing = 0

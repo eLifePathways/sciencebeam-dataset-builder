@@ -1,5 +1,12 @@
 HF_DATASET ?= elifepathways/sciencebeam-v2-benchmarking
 
+# Xet's cas::get_reconstruction returns 416 Range Not Satisfiable partway through some
+# of this repo's larger Parquet files and then wedges the transfer instead of failing.
+# Plain HTTP has no such problem, so force it. Remove once hf_xet handles these files.
+export HF_HUB_DISABLE_XET = 1
+# Fail a stalled read instead of blocking forever, so retries can actually fire.
+export HF_HUB_DOWNLOAD_TIMEOUT = 30
+
 # All dataset content stays under DATA_DIR, which is gitignored - the dataset is
 # private and must never be committed. INPUT_DIR holds pristine downloads (backup);
 # everything generated goes under OUTPUT_DIR.

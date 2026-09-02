@@ -5,6 +5,7 @@ import yaml
 from sciencebeam_dataset_builder.dataset.card import (
     render_card,
     render_front_matter,
+    render_schema_exceptions,
     render_schema_table,
     render_sources_table,
 )
@@ -72,3 +73,41 @@ class TestRenderCard:
 
     def test_marks_itself_as_generated(self):
         assert "generated-by" in render_card("body")
+
+
+class TestSchemaExceptions:
+    def test_flags_a_non_conforming_config_in_the_sources_table(self):
+        table = render_sources_table(SOURCES)
+        legacy = [s for s in SOURCES.values() if not s.canonical]
+        assert legacy, "expected at least one non-canonical source to exercise this"
+        for source in legacy:
+            row = next(
+                line for line in table.splitlines() if f"`{source.config}`" in line
+            )
+            assert "**legacy**" in row
+
+    def test_marks_conforming_configs_as_canonical(self):
+        table = render_sources_table(SOURCES)
+        for source in SOURCES.values():
+            if not source.canonical:
+                continue
+            row = next(
+                line for line in table.splitlines() if f"`{source.config}`" in line
+            )
+            assert "canonical" in row and "**legacy**" not in row
+
+    def test_card_names_every_non_conforming_config(self):
+        card = render_card("body")
+        assert "### Schema exceptions" in card
+        for source in SOURCES.values():
+            if not source.canonical:
+                assert source.config in card.split("### Schema exceptions")[1]
+
+    def test_non_conforming_configs_are_still_registered_as_loadable(self):
+        parsed = _front_matter(render_front_matter(SOURCES) + "\n")
+        registered = {c["config_name"] for c in parsed["configs"]}
+        assert registered == {s.config for s in SOURCES.values()}
+
+    def test_no_exceptions_section_content_when_all_conform(self):
+        conforming = {k: v for k, v in SOURCES.items() if v.canonical}
+        assert "no exceptions" in render_schema_exceptions(conforming)

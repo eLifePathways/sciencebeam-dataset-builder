@@ -134,6 +134,15 @@ class Source:
     description: str
     """One-line description of the corpus, for the dataset card."""
 
+    canonical: bool = True
+    """Whether this source's published files conform to :data:`CANONICAL_SCHEMA`.
+
+    A source is non-canonical while it still carries an older, narrower schema. It stays
+    a loadable config, but it is excluded from bulk migration and verification runs and
+    is flagged as an exception in the dataset card, so nothing claims a uniformity that
+    does not hold. Naming it explicitly with `--source` still migrates it.
+    """
+
 
 SOURCES: dict[str, Source] = {
     "biorxiv": Source(
@@ -197,10 +206,21 @@ SOURCES: dict[str, Source] = {
             "SciELO Preprints OAI Dublin Core records (`<oai_dc:dc>`, no body). "
             "The wider corpus; `scielo-preprints-jats` is the subset with JATS full text."
         ),
+        # Not migrated: it already uses `id`, so the rename that motivated the unified
+        # schema is a no-op here, and its Dublin Core metadata sits unextracted in the
+        # `xml` column - migrating would add three real columns and seventeen nulls.
+        # Worth doing together with a Dublin Core extraction pass, not before.
+        canonical=False,
     ),
 }
 
 SOURCES_BY_CONFIG: dict[str, Source] = {s.config: s for s in SOURCES.values()}
+
+# Sources whose published files conform to CANONICAL_SCHEMA. Bulk migration and
+# verification default to these; the rest must be requested by name.
+CANONICAL_SOURCES: dict[str, Source] = {
+    name: source for name, source in SOURCES.items() if source.canonical
+}
 
 
 def make_uid(source: str, id_value: str) -> str:

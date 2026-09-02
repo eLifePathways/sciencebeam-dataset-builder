@@ -71,12 +71,13 @@ def render_schema_table() -> str:
 def render_sources_table(sources: dict[str, Source]) -> str:
     """Return a Markdown table of every source, its config and its `id` form."""
     lines = [
-        "| `source` | config | `xml_format` | `id` | example |",
-        "| --- | --- | --- | --- | --- |",
+        "| `source` | config | `xml_format` | schema | `id` | example |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for source in sources.values():
+        schema = "canonical" if source.canonical else "**legacy**"
         lines.append(
-            f"| `{source.name}` | `{source.config}` | `{source.xml_format}` | "
+            f"| `{source.name}` | `{source.config}` | `{source.xml_format}` | {schema} | "
             f"{source.id_description} | `{source.id_example}` |"
         )
     return "\n".join(lines)
@@ -87,6 +88,22 @@ def render_source_descriptions(sources: dict[str, Source]) -> str:
     return "\n".join(
         f"- **`{source.config}`** - {source.description}" for source in sources.values()
     )
+
+
+def render_schema_exceptions(sources: dict[str, Source]) -> str:
+    """Return a section naming the configs that do not conform, and what they carry."""
+    legacy = [source for source in sources.values() if not source.canonical]
+    if not legacy:
+        return "Every config conforms; there are no exceptions."
+
+    lines = ["### Schema exceptions", ""]
+    for source in legacy:
+        lines.append(
+            f"**`{source.config}`** does not conform. It carries only `id`, `xml` and "
+            "`pdf`, and lacks `source`, `uid`, `xml_format` and the bibliographic "
+            "columns. Do not concatenate it with the canonical configs."
+        )
+    return "\n".join(lines)
 
 
 def render_card(body: str, sources: dict[str, Source] | None = None) -> str:
@@ -101,8 +118,10 @@ def render_card(body: str, sources: dict[str, Source] | None = None) -> str:
             "# sciencebeam-v2-benchmarking",
             "",
             "Paired source PDF and XML for benchmarking ScienceBeam v2 document conversion.",
-            "Every config shares one schema, so rows from different sources can be",
-            "concatenated and stay attributable via the `source` column.",
+            "",
+            "Configs marked `canonical` below share one schema, so their rows can be",
+            "concatenated and stay attributable via the `source` column. Configs marked",
+            "`legacy` still carry an older, narrower schema - see Schema exceptions.",
             "",
             "## Sources",
             "",
@@ -115,7 +134,12 @@ def render_card(body: str, sources: dict[str, Source] | None = None) -> str:
             "",
             "## Schema",
             "",
+            "This is the schema every `canonical` config conforms to exactly - same",
+            "column order, same types, same nullability.",
+            "",
             render_schema_table(),
+            "",
+            render_schema_exceptions(sources),
             "",
             body.strip(),
             "",
