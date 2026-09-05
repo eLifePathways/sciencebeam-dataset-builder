@@ -10,3 +10,19 @@ wheels/
 .venv
 
 output*/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Dataset content is NOT public - never commit it. The source of truth is the
+# private HF dataset; everything local is a working copy or a backup.
+data/
+*.parquet
+*.pdf
+*.jsonl
+*.provenance.json
+input_files/
+output_files/
+sciencebeam_dataset_builder/split_parquet_files/

@@ -11,7 +11,7 @@ from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
 
-SPLIT_FIELDS = ["ppr_id", "split"]
+SPLIT_FIELDS = ["id", "split"]
 
 # Languages with enough documents to form their own stratum.
 # Everything else is grouped as "other".
@@ -57,7 +57,7 @@ def stratified_split(
                 split = "val"
             else:
                 split = "test"
-            result.append({"ppr_id": record["ppr_id"], "split": split})
+            result.append({"id": record["id"], "split": split})
 
     rng.shuffle(result)
     return result
@@ -75,7 +75,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "output_csv",
         type=Path,
-        help="Path to write the split CSV (columns: ppr_id, split).",
+        help="Path to write the split CSV (columns: id, split).",
     )
     parser.add_argument(
         "--train",

@@ -276,6 +276,17 @@ class TestExtractArticleMeta:
         )
         assert _extract_article_meta(root)["pub_date"] == "2022-03-05"
 
+    def test_omits_an_absent_day_rather_than_zero_padding_it(self):
+        """An absent day must not become "00" - that is not a valid ISO 8601 date."""
+        root = self._meta(
+            '<pub-date pub-type="preprint"><year>2013</year><month>9</month></pub-date>'
+        )
+        assert _extract_article_meta(root)["pub_date"] == "2013-09"
+
+    def test_omits_an_absent_month_and_day(self):
+        root = self._meta('<pub-date pub-type="preprint"><year>2013</year></pub-date>')
+        assert _extract_article_meta(root)["pub_date"] == "2013"
+
     def test_extracts_license_url(self):
         root = self._meta(
             f'<permissions xmlns:ali="{ALI_NS}">'
@@ -323,11 +334,11 @@ class TestExtractArticleMeta:
 
 
 class TestExtractMetadata:
-    def test_returns_ppr_id_from_filename(self, tmp_path):
+    def test_returns_id_from_filename(self, tmp_path):
         xml_path = tmp_path / "PPR123.xml"
         _write_xml(xml_path, lang="pt")
         row = extract_metadata(xml_path)
-        assert row["ppr_id"] == "PPR123"
+        assert row["id"] == "PPR123"
 
     def test_returns_normalised_language(self, tmp_path):
         xml_path = tmp_path / "PPR1.xml"
@@ -466,7 +477,7 @@ class TestMain:
         main([str(tmp_path), str(out)])
         record = _read_jsonl(out)[0]
         assert set(record.keys()) == {
-            "ppr_id",
+            "id",
             "doi",
             "version",
             "article_type",
@@ -506,4 +517,4 @@ class TestMain:
         main([str(tmp_path), str(out)])
         records = _read_jsonl(out)
         assert len(records) == 1
-        assert records[0]["ppr_id"] == "PPR2"
+        assert records[0]["id"] == "PPR2"

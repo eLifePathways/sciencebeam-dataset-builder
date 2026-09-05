@@ -16,9 +16,7 @@ from sciencebeam_dataset_builder.scielo_preprints.split_cli import (
 
 
 def _records(languages: list[str]) -> list[dict[str, str]]:
-    return [
-        {"ppr_id": f"PPR_{i}", "language": lang} for i, lang in enumerate(languages)
-    ]
+    return [{"id": f"PPR_{i}", "language": lang} for i, lang in enumerate(languages)]
 
 
 def _write_metadata_jsonl(path: Path, languages: list[str]) -> None:
@@ -65,9 +63,9 @@ class TestStratifiedSplit:
 
         # Check each language is represented in each split
         by_split: dict[str, list[str]] = {"train": [], "val": [], "test": []}
-        ppr_to_lang = {r["ppr_id"]: r["language"] for r in records}
+        id_to_lang = {r["id"]: r["language"] for r in records}
         for row in result:
-            by_split[row["split"]].append(ppr_to_lang[row["ppr_id"]])
+            by_split[row["split"]].append(id_to_lang[row["id"]])
 
         for split_langs in by_split.values():
             assert "pt" in split_langs
@@ -83,12 +81,12 @@ class TestStratifiedSplit:
         records = _records(["pt"] * 50)
         result1 = stratified_split(records, 0.2, 0.3, seed=1)
         result2 = stratified_split(records, 0.2, 0.3, seed=2)
-        assert [r["ppr_id"] for r in result1] != [r["ppr_id"] for r in result2]
+        assert [r["id"] for r in result1] != [r["id"] for r in result2]
 
-    def test_output_contains_only_ppr_id_and_split(self):
+    def test_output_contains_only_id_and_split(self):
         records = _records(["pt"] * 10)
         result = stratified_split(records, 0.2, 0.3, seed=42)
-        assert all(set(r.keys()) == {"ppr_id", "split"} for r in result)
+        assert all(set(r.keys()) == {"id", "split"} for r in result)
 
     def test_other_stratum_distributed_proportionally(self):
         records = _records(["en"] * 20)

@@ -121,8 +121,14 @@ def _extract_article_meta(root: ET.Element) -> dict[str, Any]:
             year = pd.findtext("year") or ""
             month = pd.findtext("month") or ""
             day = pd.findtext("day") or ""
-            parts = [p for p in (year, month.zfill(2), day.zfill(2)) if p]
-            pub_date = "-".join(parts)
+            # Zero-pad only parts that are present: "".zfill(2) is "00", which is
+            # truthy, so padding first would turn an absent day into "2013-09-00".
+            parts = [
+                year,
+                month.zfill(2) if month else "",
+                day.zfill(2) if day else "",
+            ]
+            pub_date = "-".join(p for p in parts if p)
             break
 
     # License: prefer the ALI license_ref URL, fall back to empty string.
@@ -167,7 +173,7 @@ def _load_provenance(xml_path: Path) -> dict[str, str]:
 
 
 def extract_metadata(xml_path: Path) -> dict[str, Any]:
-    ppr_id = xml_path.stem.replace("PPR_", "PPR", 1)
+    document_id = xml_path.stem.replace("PPR_", "PPR", 1)
     tree = ET.parse(xml_path)
     root = tree.getroot()
     language, language_raw = _extract_language(root)
@@ -175,7 +181,7 @@ def extract_metadata(xml_path: Path) -> dict[str, Any]:
     article_meta = _extract_article_meta(root)
     provenance = _load_provenance(xml_path)
     return {
-        "ppr_id": ppr_id,
+        "id": document_id,
         **article_meta,
         "article_type": article_type,
         "language": language,
