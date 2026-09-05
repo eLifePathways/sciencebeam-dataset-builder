@@ -15,6 +15,7 @@ INPUT_DIR ?= $(DATA_DIR)/input
 OUTPUT_DIR ?= $(DATA_DIR)/output
 SPLIT_OUTPUT_DIR ?= $(OUTPUT_DIR)/splits
 MIGRATE_DIR ?= $(OUTPUT_DIR)/migrated
+CORPUS_OUTPUT_DIR ?= $(OUTPUT_DIR)/archive-cut
 
 .PHONY: install lint format test typecheck \
 	explore-scielo-preprints-jats \
@@ -22,7 +23,8 @@ MIGRATE_DIR ?= $(OUTPUT_DIR)/migrated
 	scielo-preprints-retrieve scielo-preprints-metadata scielo-preprints-split \
 	scielo-preprints-hf-dataset scielo-preprints-upload-to-hf biorxiv-jats-upload-to-hf \
 	split-parquet dataset-card dataset-card-upload \
-	migrate-dry-run migrate verify migrate-upload
+	migrate-dry-run migrate verify migrate-upload \
+	archive-cut archive-cut-render archive-cut-publish
 
 install:
 	uv sync --frozen
@@ -70,6 +72,21 @@ scielo-preprints-hf-dataset:
 		$(OUTPUT_DIR)/scielo-preprints-split.csv \
 		$(OUTPUT_DIR)/scielo-preprints-metadata.jsonl \
 		$(OUTPUT_DIR)/scielo-preprints-hf-dataset $(RUN_ARGS)
+
+# Everything corpus-specific arrives via CONFIG, so no repo id, stratum value or
+# count belongs in this file. Pass extra flags through RUN_ARGS, e.g. --plan-only.
+archive-cut:
+	uv run -m sciencebeam_dataset_builder.archive_cut.cut_cli \
+		$(CONFIG) $(CORPUS_OUTPUT_DIR) $(RUN_ARGS)
+
+# Needs LibreOffice on PATH, which is why it is a step of its own.
+archive-cut-render:
+	uv run -m sciencebeam_dataset_builder.archive_cut.render_cli \
+		$(CORPUS_OUTPUT_DIR) $(RUN_ARGS)
+
+archive-cut-publish:
+	uv run -m sciencebeam_dataset_builder.archive_cut.publish_cli \
+		$(CORPUS_OUTPUT_DIR) $(RUN_ARGS)
 
 # Split one source's Parquet files into train/validation/test.
 # SOURCE is required, e.g. `make split-parquet SOURCE=biorxiv`.
