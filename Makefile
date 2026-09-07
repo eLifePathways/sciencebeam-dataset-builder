@@ -16,6 +16,13 @@ OUTPUT_DIR ?= $(DATA_DIR)/output
 SPLIT_OUTPUT_DIR ?= $(OUTPUT_DIR)/splits
 MIGRATE_DIR ?= $(OUTPUT_DIR)/migrated
 CORPUS_OUTPUT_DIR ?= $(OUTPUT_DIR)/archive-cut
+REMOVE_DIR ?= $(OUTPUT_DIR)/removed
+# Pristine snapshot of the Hub before removal - NOT INPUT_DIR, which is the
+# pre-migration backup and carries the legacy schema for the same file names.
+REMOVE_INPUT_DIR ?= $(DATA_DIR)/input-current
+# The manual-review verdicts. They judge identifiable third-party articles, so like
+# the dataset itself they stay under DATA_DIR and are never committed.
+REMOVALS_DIR ?= $(DATA_DIR)/removals
 
 .PHONY: install lint format test typecheck \
 	explore-scielo-preprints-jats \
@@ -24,6 +31,7 @@ CORPUS_OUTPUT_DIR ?= $(OUTPUT_DIR)/archive-cut
 	scielo-preprints-hf-dataset scielo-preprints-upload-to-hf biorxiv-jats-upload-to-hf \
 	split-parquet dataset-card dataset-card-upload \
 	migrate-dry-run migrate verify migrate-upload \
+	remove-dry-run remove verify-removal remove-upload \
 	archive-cut archive-cut-render archive-cut-publish
 
 install:
@@ -121,6 +129,29 @@ verify:
 migrate-upload:
 	uv run -m sciencebeam_dataset_builder.dataset.migrate_cli $(MIGRATE_DIR) \
 		--input-dir $(INPUT_DIR) --repo-id $(HF_DATASET) --upload $(RUN_ARGS)
+
+# Delete the manually reviewed documents listed in $(REMOVALS_DIR)/*.csv. Inspect, verify,
+# then upload. REMOVE_INPUT_DIR is a snapshot of the Hub as it stands before removal;
+# it is deliberately not INPUT_DIR, which holds the pre-migration backup.
+remove-dry-run:
+	uv run -m sciencebeam_dataset_builder.dataset.removal.remove_cli $(REMOVE_DIR) \
+		--input-dir $(REMOVE_INPUT_DIR) --removals-dir $(REMOVALS_DIR) \
+		--repo-id $(HF_DATASET) --dry-run $(RUN_ARGS)
+
+remove:
+	uv run -m sciencebeam_dataset_builder.dataset.removal.remove_cli $(REMOVE_DIR) \
+		--input-dir $(REMOVE_INPUT_DIR) --removals-dir $(REMOVALS_DIR) \
+		--repo-id $(HF_DATASET) $(RUN_ARGS)
+
+# Prove the removal deleted exactly the listed rows, offline, before anything is uploaded.
+verify-removal:
+	uv run -m sciencebeam_dataset_builder.dataset.removal.verify_cli \
+		--input-dir $(REMOVE_INPUT_DIR) --output-dir $(REMOVE_DIR) \
+		--removals-dir $(REMOVALS_DIR) $(RUN_ARGS)
+
+remove-upload:
+	uv run -m sciencebeam_dataset_builder.dataset.removal.remove_cli $(REMOVE_DIR) \
+		--input-dir $(REMOVE_INPUT_DIR) --repo-id $(HF_DATASET) --upload $(RUN_ARGS)
 
 scielo-preprints-upload-to-hf:
 	uv run hf upload $(HF_DATASET) \
