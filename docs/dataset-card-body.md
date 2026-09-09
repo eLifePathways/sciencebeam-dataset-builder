@@ -7,19 +7,21 @@ small.
 Split membership is frozen. New assignments are a SHA-256 hash bucket on `uid`, so
 harvesting more documents into a source never reshuffles the documents already in it.
 
-Counts reflect the removal of documents that manual review of the rendered PDFs found
-unfit for a conversion benchmark - editorials, records with no abstract or no authors,
-fragments of papers. Removal deletes whole rows and never re-splits, so a document that
-remains keeps the split it was always in. `pkp-jats` lost the most by far, 213 of 700.
+Counts reflect the removal of documents that manual review found unfit for a conversion
+benchmark: records with no abstract or no authors, editorials and other non-articles, and
+pairs whose XML and PDF do not carry the same content - different versions of a paper,
+different languages, or missing body sections. Removal deletes whole rows and never
+re-splits, so a document that remains keeps the split it was always in. `pkp-jats` lost
+the most by far, 223 of its original 700.
 
 | config | train | validation | test | total |
 | --- | --- | --- | --- | --- |
-| `biorxiv-jats` | 30 | 43 | 76 | 149 |
-| `ore-jats` | 37 | 59 | 97 | 193 |
-| `pkp-jats` | 99 | 135 | 253 | 487 |
-| `scielo_br-jats` | 127 | 183 | 318 | 628 |
+| `biorxiv-jats` | 29 | 41 | 75 | 145 |
+| `ore-jats` | 37 | 58 | 97 | 192 |
+| `pkp-jats` | 95 | 132 | 250 | 477 |
+| `scielo_br-jats` | 123 | 181 | 315 | 619 |
 | `scielo_mx-jats` | 30 | 39 | 64 | 133 |
-| `scielo-preprints-jats` | 84 | 125 | 210 | 419 |
+| `scielo-preprints-jats` | 83 | 125 | 210 | 418 |
 | `scielo-preprints-metadata` | 484 | 233 | 280 | 997 |
 
 `scielo-preprints-metadata` is the exception twice over: it is roughly 49 / 24 / 28

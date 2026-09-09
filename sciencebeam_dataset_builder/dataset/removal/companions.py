@@ -24,6 +24,12 @@ the removal, rather than being written down anywhere.
 A JATS row whose DOI is absent or shaped differently has no resolvable companion. That
 is reported rather than guessed at - a metadata row deleted on a bad guess is a row
 deleted for no reason.
+
+Resolution needs the JATS row to still be there. Once a preprint has been removed from
+`scielo-preprints-jats`, its DOI is gone with it and its companion can no longer be
+derived - so a companion must be removed in the same pass as its JATS row, or named
+explicitly in a removal list afterwards. Every resolved companion is written to the run
+manifest with the JATS uid it came from, which is what makes that recovery possible.
 """
 
 import re
