@@ -151,6 +151,11 @@ that keys the metadata row. That is the join the dataset card documents; `dc:ide
 is unusable for it. A removed preprint whose DOI is absent or shaped differently is
 reported rather than guessed at.
 
+Resolution needs the JATS row present: once a preprint is removed from
+`scielo-preprints-jats` its DOI goes with it, so a companion must be removed in the same
+pass or named explicitly in a later list. The run manifest records every companion with
+the JATS uid it came from, so a missed one can always be recovered from it.
+
 `scielo-preprints-metadata` is on the older `id` / `xml` / `pdf` schema and has no `uid`
 column, so removal derives one from `source` and `id`. It is 2 GB, and a review of
 rendered PDFs usually leaves it untouched, so it is fetched only when it actually has
