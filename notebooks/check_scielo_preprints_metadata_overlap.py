@@ -18,7 +18,7 @@ RANDOM_SEED = 42
 # %%
 # Load current split
 split_map = {}
-for line in SPLIT_CSV.read_text().splitlines()[1:]:
+for line in SPLIT_CSV.read_text(encoding="utf-8").splitlines()[1:]:
     ppr_id, split = line.strip().split(",")
     split_map[ppr_id] = split
 
@@ -41,7 +41,7 @@ print(f"\nUnique DOIs found in scielo_preprints.parquet XMLs: {len(parquet_dois)
 # Map DOI -> ppr_id and load full metadata from JSONL
 doi_to_ppr = {}
 meta = {}
-for line in METADATA_JSONL.read_text().splitlines():
+for line in METADATA_JSONL.read_text(encoding="utf-8").splitlines():
     rec = json.loads(line)
     meta[rec["ppr_id"]] = rec
     if rec.get("doi"):
@@ -139,5 +139,5 @@ for lang in sorted(by_lang):
 lines = ["ppr_id,split"] + [
     f"{ppr_id},{split}" for ppr_id, split in sorted(new_split.items())
 ]
-NEW_SPLIT_CSV.write_text("\n".join(lines) + "\n")
+NEW_SPLIT_CSV.write_text("\n".join(lines) + "\n", encoding="utf-8")
 print(f"\nSaved reshuffled split to {NEW_SPLIT_CSV}")

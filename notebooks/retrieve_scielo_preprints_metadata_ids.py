@@ -29,7 +29,7 @@ print(f"Retrieved {len(ids)} ids")
 
 # %%
 OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-with open(OUTPUT_PATH, "w") as out:
+with open(OUTPUT_PATH, "w", encoding="utf-8") as out:
     out.write("\n".join(ids) + "\n")
 
 print(f"Saved to {OUTPUT_PATH}")

@@ -65,8 +65,12 @@ def _iter_articles_from_stream(
     """
     context = ET.iterparse(f, events=("start", "end"))
 
-    # Grab the root <articles> element so we can remove children as we go.
-    _, root = next(context)
+    # Grab the root <articles> element so we can remove children as we go. An empty
+    # stream has none; PEP 479 would turn the StopIteration into a RuntimeError here.
+    try:
+        _, root = next(context)
+    except StopIteration:
+        return
 
     remaining = set(target_ids)
 
