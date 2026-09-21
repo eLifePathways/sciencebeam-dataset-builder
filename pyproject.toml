@@ -48,9 +48,44 @@ dev = [
     "datasets>=3.0",
     "mypy>=1.15",
     "pandas-stubs>=3.0.0.260204",
+    "pylint>=4.0.8",
     "pytest>=9.0.2",
     "ruff>=0.15.7",
     "types-pyyaml>=6.0",
     "types-requests>=2.32.4.20260324",
     "types-tqdm>=4.67.3.20260303",
+]
+
+[tool.pylint.main]
+# Tests are not linted, matching the mypy scope above.
+ignore-paths = ["tests/.*"]
+# pyarrow.compute builds its members at import time, so pylint sees none of them.
+ignored-modules = ["pyarrow.compute"]
+
+[tool.pylint."messages control"]
+# Ruff owns formatting and import order; pylint is here for the logic checks.
+# The size and docstring families are off because this codebase is deliberately
+# terse and its CLIs are long by nature, and duplicate-code fires on the argparse
+# boilerplate the sibling CLIs share on purpose.
+disable = [
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "duplicate-code",
+    "too-many-locals",
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "too-many-branches",
+    "too-many-statements",
+    "too-many-return-statements",
+    "too-many-instance-attributes",
+    "import-outside-toplevel",
+    "line-too-long",
+    "wrong-import-order",
+    "ungrouped-imports",
+    # Deliberate in the retry and upload paths, and in the notebook scripts.
+    "broad-exception-caught",
+    "unused-argument",
+    "consider-using-with",
+    "redefined-outer-name",
 ]
