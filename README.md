@@ -44,18 +44,23 @@ sciencebeam_dataset_builder/
       filter.py          drop the listed rows; prove only those rows went
       remove_cli.py      fetch, filter, write, upload
       verify_cli.py      check the filtered output against its snapshot
+    license/             derive each document's licence and what it permits
+      extract_license.py   read the stated licence out of the stored xml
+      classify_license.py  decide what that licence permits for training
+      audit_cli.py         audit a snapshot, write the reports
+      reports/             the audit's output, and the report (committed)
   scielo_preprints/      source-specific retrieval and metadata extraction
 docs/
   dataset-card-body.md   the hand-written half of the published dataset card
 data/                    all dataset content - gitignored, never committed
-  input/                 pristine copies as downloaded from the Hub (backup)
-  input-current/         snapshot of the Hub taken before a removal run
+  <YYYY-MM-DD>/          dated snapshot of the Hub, mirroring its config layout
   removals/              manual-review verdicts, `uid,reason` CSVs
   output/                everything generated locally
-    migrated/            migrated Parquet, ready to upload
-    removed/             filtered Parquet, ready to upload
     splits/              train/validation/test output from split-parquet
 ```
+
+Snapshots are named for the day they were taken, so the newest sorts last and tooling
+can find it without being told. Only the current snapshot is kept.
 
 The dataset is **private**. Nothing under `data/` may be committed - `.gitignore`
 covers the whole directory plus `*.parquet` / `*.pdf` / `*.jsonl` anywhere in the tree.
@@ -170,6 +175,31 @@ does a run narrowed with `--source`.
 
 After a removal is uploaded, update the split table in `docs/dataset-card-body.md` and
 regenerate the card with `make dataset-card-upload`; the counts there are hand-written.
+
+## Licence audit
+
+Training data may only include appropriately licensed content, so every document's
+licence is derived from the `xml` it already stores - no network, no sample.
+
+```sh
+make licence-audit
+```
+
+This audits the newest dated snapshot under `data/` and writes to the package's
+`license/reports/`: the per-document table, the exclusion list in the same `uid,reason`
+shape the removal lists use, and the CC BY-NC list that is pending a policy decision.
+`license/reports/README.md` is the report.
+
+Unlike the review verdicts, these findings come from the articles' own published licence
+statements rather than from a judgement about them, so they are committed.
+
+A licence verdict does **not** feed the removal pipeline. A licence constrains what a
+model may be trained on, not what may be held to measure conversion accuracy, so the
+benchmark keeps every row and training filters on `training-exclusions.csv`.
+
+What a licence permits is policy, not fact, and lives in two flags in
+`classify_license.py` - whether NoDerivatives and whether NonCommercial block training.
+Changing either re-decides the corpus without re-reading any Parquet.
 
 ## Splitting
 
