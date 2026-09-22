@@ -1,227 +1,72 @@
 # Licence audit
 
-Which documents in `elifepathways/sciencebeam-v2-benchmarking` may be used to train a
-model, and which may not.
+Which documents may be used to train a model, and which may not. Derived from the
+licence each document states in its stored `xml`.
 
-Audited snapshot: `data/2026-09-18`, all 2,981 documents across all seven configs.
-Regenerate with `make licence-audit`.
+Snapshot `data/2026-09-18`, all 2,981 documents. Regenerate with `make licence-audit`.
 
 ## Result
 
-**1,003 of 2,981 documents (33.6%) are excluded from training under the current policy.**
-The trained model is intended for commercial use, so NonCommercial is excluded alongside
-NoDerivatives.
+**1,003 of 2,981 documents (33.6%) are excluded from training.** The 1,978 that remain
+are all CC BY 4.0.
 
-| verdict | documents | share | train | validation | test |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| permissive — CC BY, CC0 | 1,978 | 66.4% | 673 | 538 | 767 |
-| **unknown — no licence stated** | **610** | **20.5%** | 125 | 171 | 314 |
-| **non-commercial — CC BY-NC** | **301** | **10.1%** | 62 | 77 | 162 |
-| **no-derivatives — CC BY-ND, CC BY-NC-ND** | **91** | **3.1%** | 21 | 23 | 47 |
-| **all rights reserved** | **1** | 0.0% | 0 | 0 | 1 |
-| total | 2,981 | | 881 | 809 | 1,291 |
+| verdict | documents | share | usable |
+| --- | ---: | ---: | :---: |
+| permissive — CC BY 4.0 | 1,978 | 66.4% | yes |
+| unknown — no licence stated | 610 | 20.5% | no |
+| non-commercial — CC BY-NC | 301 | 10.1% | no |
+| no-derivatives — CC BY-ND, CC BY-NC-ND | 91 | 3.1% | no |
+| all rights reserved | 1 | 0.0% | no |
 
-Bold rows are excluded under the current policy (`NO_DERIVATIVES_BLOCKS_TRAINING = True`,
-`NON_COMMERCIAL_BLOCKS_TRAINING = True`). Only the 1,978 permissive documents are usable,
-673 of them in `train`.
+## By corpus
 
-## Licence distribution
+| config | documents | licence | usable |
+| --- | ---: | --- | ---: |
+| `ore-jats` | 192 | 100% CC BY 4.0 | 192 |
+| `scielo-preprints-jats` | 418 | 100% CC BY 4.0 | 418 |
+| `scielo-preprints-metadata` | 997 | 100% CC BY 4.0 | 997 |
+| `scielo_br-jats` | 619 | 51.4% CC BY 4.0 · 45.9% CC BY-NC 4.0 · 2.7% CC BY-NC-ND 4.0 | 318 |
+| `biorxiv-jats` | 145 | 49.7% CC BY-NC-ND 4.0 · 36.6% CC BY 4.0 · 11.7% CC BY-NC 4.0 · 1.4% CC BY-ND 4.0 · 1 All Rights Reserved | 53 |
+| `pkp-jats` | 477 | no licence stated | 0 |
+| `scielo_mx-jats` | 133 | no licence stated | 0 |
 
-| licence | documents | share |
-| --- | ---: | ---: |
-| CC BY 4.0 | 1,978 | 66.4% |
-| no licence — template placeholder | 477 | 16.0% |
-| CC BY-NC 4.0 | 301 | 10.1% |
-| no licence — no permissions element | 131 | 4.4% |
-| CC BY-NC-ND 4.0 | 89 | 3.0% |
-| CC BY-ND 4.0 | 2 | 0.1% |
-| unparseable xml | 2 | 0.1% |
-| All Rights Reserved | 1 | 0.0% |
+## The two unlicensed corpora
 
-No document in the corpus is CC0, so the dataset cannot be published as CC0 — see
-[Two things to correct](#two-things-to-correct).
+`pkp-jats` is unattributable, not merely unlicensed. Every identifying field is an
+unsubstituted PKP template placeholder — `© 2015 copyright-statement`,
+`<publisher-name>publisher-name</publisher-name>`, `<issn>0000-0000</issn>` — and `doi`,
+`title` and `xml_source_url` are null. Nothing says which journal or rightsholder a
+document belongs to, so its licence cannot be looked up. Recovering the original harvest
+provenance is the only route, and that builder is not in this repository.
 
-## Licence by config
+`scielo_mx-jats` simply has no `<permissions>` element. The SciELO PID still identifies
+the article, so the licence is recoverable per journal — 25 publishers, not 133 lookups.
+Two of its documents are also not well-formed XML.
 
-| config | documents | licence |
-| --- | ---: | --- |
-| `ore-jats` | 192 | 100% CC BY 4.0 |
-| `scielo-preprints-jats` | 418 | 100% CC BY 4.0 |
-| `scielo-preprints-metadata` | 997 | 100% CC BY 4.0 |
-| `scielo_br-jats` | 619 | 51.4% CC BY 4.0 · 45.9% CC BY-NC 4.0 · 2.7% CC BY-NC-ND 4.0 |
-| `biorxiv-jats` | 145 | 49.7% CC BY-NC-ND 4.0 · 36.6% CC BY 4.0 · 11.7% CC BY-NC 4.0 · 1.4% CC BY-ND 4.0 · 1 All Rights Reserved |
-| `pkp-jats` | 477 | **no licence — 100%** |
-| `scielo_mx-jats` | 133 | **no licence — 100%** (2 of them unparseable) |
+Silence is not permission, so both are treated as unusable rather than open.
 
-Three configs are entirely permissive and safe to expand freely — `ore-jats` and both
-SciELO Preprints configs, 1,607 documents between them, 81% of everything usable today.
-`biorxiv-jats` is the opposite: only 37% of it is permissive, and half carries ND.
+## Policy
 
-## Policy options
+Both flags in `classify_license.py` are on: NoDerivatives and NonCommercial each block
+training. NC blocks because the trained model is intended for commercial use.
 
-Whether ND and NC block training is a policy decision, not a fact about the documents,
-so it is two flags in `classify_license.py`. Changing either re-decides the corpus
-without re-reading any Parquet. The four combinations:
+ND is the one contested reading left. It costs 91 documents, 74 of them in
+`biorxiv-jats`; turning it off would take that config from 53 usable to 127. Changing
+either flag re-decides the corpus without re-reading any Parquet.
 
-| option | ND blocks | NC blocks | usable | excluded | usable train rows |
-| --- | :---: | :---: | ---: | ---: | ---: |
-| **A — current, strictest** | **yes** | **yes** | **1,978 (66.4%)** | **1,003** | **673 of 881** |
-| B | yes | no | 2,279 (76.5%) | 702 | 735 of 881 |
-| C | no | yes | 2,069 (69.4%) | 912 | 694 of 881 |
-| D — most permissive | no | no | 2,370 (79.5%) | 611 | 756 of 881 |
+## Notes
 
-Usable documents per config under each option:
+The published dataset card declares `LICENSE = "cc0-1.0"` (`card.py`). No document in the
+corpus is CC0. That is wrong independently of any training decision.
 
-| config | total | A (current) | B | C | D |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `biorxiv-jats` | 145 | 53 | 70 | 127 | 144 |
-| `ore-jats` | 192 | 192 | 192 | 192 | 192 |
-| `pkp-jats` | 477 | 0 | 0 | 0 | 0 |
-| `scielo-preprints-jats` | 418 | 418 | 418 | 418 | 418 |
-| `scielo-preprints-metadata` | 997 | 997 | 997 | 997 | 997 |
-| `scielo_br-jats` | 619 | 318 | 602 | 335 | 619 |
-| `scielo_mx-jats` | 133 | 0 | 0 | 0 | 0 |
-
-What the options actually turn on:
-
-- **A is current** because the trained model is intended for commercial use, which NC
-  forbids. That decision costs 301 documents against option B, almost all of them
-  `scielo_br-jats`, which drops from 602 usable to 318.
-- **Moving A → C** (stop blocking ND) would gain 91 documents, mostly `biorxiv-jats`,
-  which goes from 53 usable to 127. This is the one contested reading left: ND forbids
-  distributing adaptations, and whether model weights are an adaptation of the training
-  text is unsettled. Worth revisiting if legal advice says ND does not reach training.
-- **No option recovers `pkp-jats` or `scielo_mx-jats`.** Those 610 documents state no
-  licence at all, and that is not a policy dial — silence is not permission.
-
-Now that NC is settled, the only remaining flag is ND, worth 91 documents. The 610
-unlicensed documents are a far bigger prize.
-
-## `pkp-jats` is unattributable, not merely unlicensed
-
-This is the finding that needs a decision from outside this repo.
-
-All 477 `pkp-jats` documents carry JATS in which every identifying field is an
-unsubstituted template placeholder left behind by the PKP JATS plugin:
-
-```xml
-<copyright-statement>© 2015 copyright-statement</copyright-statement>
-<publisher-name>publisher-name</publisher-name>
-<journal-title>journal-title</journal-title>
-<issn>0000-0000</issn>
-```
-
-The same fake export date (`2015-11-18`) appears on every row, and `doi`, `title` and
-`xml_source_url` are all null. Nothing in the dataset identifies which journal, which
-publisher or which rightsholder a `pkp` document belongs to, so its licence cannot be
-looked up and its owner cannot be asked.
-
-`pkp-jats` is 16% of the corpus and was already the config that lost the most to manual
-review — 223 of its original 700. Recovering the original harvest provenance (the OJS
-instances and galley URLs the builder walked) is the only route to clearing it, and that
-builder is not in this repository.
-
-`scielo_mx-jats` is a smaller version of the same problem: 133 documents with no
-`<permissions>` element at all, spread across 33 journals and 25 publishers. Here the
-SciELO PID does identify the article, so the licence is recoverable per journal from
-SciELO itself — 25 lookups, not 133.
-
-Two `scielo_mx` documents are additionally not well-formed XML (a bad token mid-document,
-beyond the entity repair the extractor does). That is a data-quality issue rather than a
-licence one; both are excluded as unknown either way.
-
-## Two things to correct
-
-- **The published card declares the wrong licence.** `card.py` sets
-  `LICENSE = "cc0-1.0"`, so the Hub card claims the whole dataset is CC0. Not one
-  document in the corpus is CC0: it holds 91 NoDerivatives, 301 NonCommercial, one that
-  reserves all rights, and 610 with no licence at all. This is a public claim that is
-  wrong today, independent of any training decision.
-- **The `license` column is null for five of seven configs.** The dataset card already
-  records this as pending a backfill from the stored `xml`. `extract_license.py` is that
-  backfill: the values exist now and only need writing into the column.
-
-## Recommended path: tag, do not delete
-
-Keep every row in the benchmark and filter at training time.
-
-The removal pipeline exists and could be pointed at these 1,003 documents. It should not
-be:
-
-- **Benchmarking is not training.** A licence constrains what a model is trained on. It
-  does not constrain holding a PDF/XML pair to measure conversion accuracy. Deleting
-  these rows would cost evaluation coverage and gain nothing legally.
-- **It would gut the benchmark.** `biorxiv-jats` would drop from 145 documents to 53
-  and `scielo_br-jats` from 619 to 318, while `pkp-jats` and `scielo_mx-jats` would
-  disappear entirely — 610 documents whose licences are unknown, not known to be
-  unusable.
-- **Removal is irreversible and does not re-split.** A publisher clarifying its terms, or
-  a change to either policy flag above, could not be undone.
-- **It conflates two different judgements.** The removal manifest means "unfit for a
-  conversion benchmark". A licence verdict is a separate axis and belongs in a separate
-  list.
-
-Concretely: backfill `license` for every config from `extract_license.py`, publish
-`training-exclusions.csv` alongside the dataset, and have the training pipeline filter on
-it.
-
-## Open decisions
-
-1. **Can the `pkp` harvest provenance be recovered?** Decides whether 477 documents are
-   recoverable or permanently unusable. The largest single question here.
-2. **Is a per-journal SciELO Mexico licence lookup worth 25 queries?** Would clear or
-   condemn 133 documents.
-3. **Does NoDerivatives block training?** Contested, and the only policy flag still
-   open. Decides 91 documents, 74 of them in `biorxiv-jats`. Currently treated as
-   blocking; worth revisiting with legal advice.
-
-**Settled:** NonCommercial blocks training, because the trained model is intended for
-commercial use. That excludes 301 documents, 284 of them in `scielo_br-jats`.
-
-## Where to expand first
-
-Ranked by licence risk, for when the corpus grows:
-
-1. **Open Research Europe and SciELO Preprints** — 100% CC BY 4.0, no per-document
-   check needed beyond the audit that already runs.
-2. **SciELO Brazil** — mixed but always explicit, so every new document self-declares.
-   Expect roughly half to be NC and therefore unusable: budget two harvested documents
-   per usable one.
-3. **bioRxiv** — explicit but the most restricted: only ~37% of anything harvested will
-   be usable, since half carries ND and another eighth NC.
-4. **OJS/PKP** — do not expand until the provenance question is answered. More documents
-   through the same builder would add more unattributable rows.
+Licence verdicts do not feed the removal pipeline: a licence limits what may be trained
+on, not what may be held to measure conversion accuracy, so the benchmark keeps every row
+and training filters on `training-exclusions.csv`.
 
 ## Files
 
 | file | contents |
 | --- | --- |
-| `licence-per-document.csv` | every document with its licence, verdict and the evidence it was read from |
-| `training-exclusions.csv` | the 1,003 excluded documents, in the `uid,reason` shape the removal lists use |
-| `training-non-commercial.csv` | the 301 CC BY-NC documents on their own, a subset of the exclusions |
-
-## Method
-
-Licences are read from the `xml` the dataset already stores, so the audit needs no
-network and covers every document rather than a sample. Three renditions are parsed:
-JATS `<license>`, NISO `<ali:license_ref>` and Dublin Core `<dc:rights>`. Documents that
-fail to parse are repaired for undefined HTML entities and illegal control characters
-before being given up on.
-
-Silence is reported in three distinguishable kinds rather than one "unknown", because
-they are three different problems: a real copyright statement with no licence, no
-permissions element at all, and an unsubstituted template placeholder. Collapsing them
-would have hidden what `pkp-jats` actually is.
-
-This supersedes the sample analysis in
-[ScienceBeam2.0#45](https://github.com/eLifePathways/ScienceBeam2.0/issues/45), which
-read 147 loose XML files. That analysis was directionally right; three things change over
-the full corpus:
-
-- `scielo-preprints-metadata` does carry a licence, CC BY 4.0 in `dc:rights`. It had no
-  rows in the sample and is the largest config.
-- `pkp`'s missing licence is not a format quirk but a template placeholder, and the same
-  placeholders erase the publisher and journal too.
-- One bioRxiv document explicitly reserves all rights.
-
-Absence of a licence is reported as absence, never as permission.
+| `licence-per-document.csv` | every document with its licence, verdict and evidence |
+| `training-exclusions.csv` | the 1,003 excluded documents, as `uid,reason` |
+| `training-non-commercial.csv` | the 301 CC BY-NC documents alone, a subset of the above |
