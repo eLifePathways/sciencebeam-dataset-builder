@@ -23,6 +23,9 @@ REMOVE_INPUT_DIR ?= $(DATA_DIR)/input-current
 # The manual-review verdicts. They judge identifiable third-party articles, so like
 # the dataset itself they stay under DATA_DIR and are never committed.
 REMOVALS_DIR ?= $(DATA_DIR)/removals
+# Licence findings come from the articles' own published statements, so unlike the
+# review verdicts they are not private to the dataset and are committed.
+LICENCE_REPORTS_DIR ?= ./sciencebeam_dataset_builder/dataset/license/reports
 
 .PHONY: install lint format test typecheck \
 	explore-scielo-preprints-jats \
@@ -32,6 +35,7 @@ REMOVALS_DIR ?= $(DATA_DIR)/removals
 	split-parquet dataset-card dataset-card-upload \
 	migrate-dry-run migrate verify migrate-upload \
 	remove-dry-run remove verify-removal remove-upload \
+	licence-audit \
 	archive-cut archive-cut-render archive-cut-publish
 
 install:
@@ -40,6 +44,7 @@ install:
 lint:
 	uv run ruff check .
 	uv run ruff format --check .
+	uv run pylint sciencebeam_dataset_builder notebooks
 	uv run mypy sciencebeam_dataset_builder notebooks
 
 typecheck:
@@ -152,6 +157,13 @@ verify-removal:
 remove-upload:
 	uv run -m sciencebeam_dataset_builder.dataset.removal.remove_cli $(REMOVE_DIR) \
 		--input-dir $(REMOVE_INPUT_DIR) --repo-id $(HF_DATASET) --upload $(RUN_ARGS)
+
+# Derive every document's licence from the stored xml and report what it permits for
+# training. Offline, reads no PDFs, uploads nothing. Audits the newest dated snapshot
+# under DATA_DIR unless RUN_ARGS names another with --dataset-dir.
+licence-audit:
+	uv run -m sciencebeam_dataset_builder.dataset.license.audit_cli \
+		--data-dir $(DATA_DIR) --output-dir $(LICENCE_REPORTS_DIR) $(RUN_ARGS)
 
 scielo-preprints-upload-to-hf:
 	uv run hf upload $(HF_DATASET) \
