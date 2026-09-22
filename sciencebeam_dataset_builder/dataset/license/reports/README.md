@@ -8,20 +8,22 @@ Regenerate with `make licence-audit`.
 
 ## Result
 
-**702 of 2,981 documents (23.5%) are excluded from training under the current policy.**
-A further 301 are usable only if the trained model is never used commercially.
+**1,003 of 2,981 documents (33.6%) are excluded from training under the current policy.**
+The trained model is intended for commercial use, so NonCommercial is excluded alongside
+NoDerivatives.
 
 | verdict | documents | share | train | validation | test |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | permissive — CC BY, CC0 | 1,978 | 66.4% | 673 | 538 | 767 |
 | **unknown — no licence stated** | **610** | **20.5%** | 125 | 171 | 314 |
-| non-commercial — CC BY-NC | 301 | 10.1% | 62 | 77 | 162 |
+| **non-commercial — CC BY-NC** | **301** | **10.1%** | 62 | 77 | 162 |
 | **no-derivatives — CC BY-ND, CC BY-NC-ND** | **91** | **3.1%** | 21 | 23 | 47 |
 | **all rights reserved** | **1** | 0.0% | 0 | 0 | 1 |
 | total | 2,981 | | 881 | 809 | 1,291 |
 
 Bold rows are excluded under the current policy (`NO_DERIVATIVES_BLOCKS_TRAINING = True`,
-`NON_COMMERCIAL_BLOCKS_TRAINING = False`).
+`NON_COMMERCIAL_BLOCKS_TRAINING = True`). Only the 1,978 permissive documents are usable,
+673 of them in `train`.
 
 ## Licence distribution
 
@@ -63,14 +65,14 @@ without re-reading any Parquet. The four combinations:
 
 | option | ND blocks | NC blocks | usable | excluded | usable train rows |
 | --- | :---: | :---: | ---: | ---: | ---: |
-| A — strictest | yes | yes | 1,978 (66.4%) | 1,003 | 673 of 881 |
-| **B — current** | **yes** | **no** | **2,279 (76.5%)** | **702** | **735 of 881** |
+| **A — current, strictest** | **yes** | **yes** | **1,978 (66.4%)** | **1,003** | **673 of 881** |
+| B | yes | no | 2,279 (76.5%) | 702 | 735 of 881 |
 | C | no | yes | 2,069 (69.4%) | 912 | 694 of 881 |
 | D — most permissive | no | no | 2,370 (79.5%) | 611 | 756 of 881 |
 
 Usable documents per config under each option:
 
-| config | total | A | B (current) | C | D |
+| config | total | A (current) | B | C | D |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `biorxiv-jats` | 145 | 53 | 70 | 127 | 144 |
 | `ore-jats` | 192 | 192 | 192 | 192 | 192 |
@@ -82,18 +84,18 @@ Usable documents per config under each option:
 
 What the options actually turn on:
 
-- **Moving B → A** (also block NC) costs 301 documents, almost all of them
-  `scielo_br-jats`, which drops from 602 to 318. Worth it only if the trained model may
-  be used commercially — that is a question about ScienceBeam, not about the corpus.
-- **Moving B → D** (stop blocking ND) gains 91 documents, mostly `biorxiv-jats`, which
-  more than doubles from 70 to 144. This is the contested reading: ND forbids
+- **A is current** because the trained model is intended for commercial use, which NC
+  forbids. That decision costs 301 documents against option B, almost all of them
+  `scielo_br-jats`, which drops from 602 usable to 318.
+- **Moving A → C** (stop blocking ND) would gain 91 documents, mostly `biorxiv-jats`,
+  which goes from 53 usable to 127. This is the one contested reading left: ND forbids
   distributing adaptations, and whether model weights are an adaptation of the training
-  text is unsettled.
+  text is unsettled. Worth revisiting if legal advice says ND does not reach training.
 - **No option recovers `pkp-jats` or `scielo_mx-jats`.** Those 610 documents state no
   licence at all, and that is not a policy dial — silence is not permission.
 
-The spread between the strictest and the most permissive option is 392 documents, 13%
-of the corpus. The 610 unlicensed documents are a bigger prize than either flag.
+Now that NC is settled, the only remaining flag is ND, worth 91 documents. The 610
+unlicensed documents are a far bigger prize.
 
 ## `pkp-jats` is unattributable, not merely unlicensed
 
@@ -143,15 +145,16 @@ licence one; both are excluded as unknown either way.
 
 Keep every row in the benchmark and filter at training time.
 
-The removal pipeline exists and could be pointed at these 702 documents. It should not
+The removal pipeline exists and could be pointed at these 1,003 documents. It should not
 be:
 
 - **Benchmarking is not training.** A licence constrains what a model is trained on. It
   does not constrain holding a PDF/XML pair to measure conversion accuracy. Deleting
   these rows would cost evaluation coverage and gain nothing legally.
-- **It would gut the benchmark.** `biorxiv-jats` would drop from 145 documents to 70,
-  and `pkp-jats` and `scielo_mx-jats` would disappear entirely — 610 documents whose
-  licences are unknown, not known to be unusable.
+- **It would gut the benchmark.** `biorxiv-jats` would drop from 145 documents to 53
+  and `scielo_br-jats` from 619 to 318, while `pkp-jats` and `scielo_mx-jats` would
+  disappear entirely — 610 documents whose licences are unknown, not known to be
+  unusable.
 - **Removal is irreversible and does not re-split.** A publisher clarifying its terms, or
   a change to either policy flag above, could not be undone.
 - **It conflates two different judgements.** The removal manifest means "unfit for a
@@ -164,17 +167,16 @@ it.
 
 ## Open decisions
 
-1. **Does NoDerivatives block training?** Contested. Decides 91 documents, 74 of them in
-   `biorxiv-jats`. Currently treated as blocking.
-2. **Does NonCommercial block training?** Depends on whether the resulting model is used
-   commercially, which is a question about ScienceBeam rather than about the documents.
-   Decides 301 documents, 284 of them in `scielo_br-jats`. Currently not blocking.
-3. **Can the `pkp` harvest provenance be recovered?** Decides whether 477 documents are
+1. **Can the `pkp` harvest provenance be recovered?** Decides whether 477 documents are
    recoverable or permanently unusable. The largest single question here.
-4. **Is a per-journal SciELO Mexico licence lookup worth 25 queries?** Would clear or
+2. **Is a per-journal SciELO Mexico licence lookup worth 25 queries?** Would clear or
    condemn 133 documents.
+3. **Does NoDerivatives block training?** Contested, and the only policy flag still
+   open. Decides 91 documents, 74 of them in `biorxiv-jats`. Currently treated as
+   blocking; worth revisiting with legal advice.
 
-Decisions 1 and 2 are the two flags in `classify_license.py`.
+**Settled:** NonCommercial blocks training, because the trained model is intended for
+commercial use. That excludes 301 documents, 284 of them in `scielo_br-jats`.
 
 ## Where to expand first
 
@@ -182,10 +184,11 @@ Ranked by licence risk, for when the corpus grows:
 
 1. **Open Research Europe and SciELO Preprints** — 100% CC BY 4.0, no per-document
    check needed beyond the audit that already runs.
-2. **SciELO Brazil** — mixed but always explicit, so every new document self-declares;
-   roughly half will be NC.
-3. **bioRxiv** — explicit but ND-heavy: expect only ~37% of anything harvested to be
-   permissive, and budget for that.
+2. **SciELO Brazil** — mixed but always explicit, so every new document self-declares.
+   Expect roughly half to be NC and therefore unusable: budget two harvested documents
+   per usable one.
+3. **bioRxiv** — explicit but the most restricted: only ~37% of anything harvested will
+   be usable, since half carries ND and another eighth NC.
 4. **OJS/PKP** — do not expand until the provenance question is answered. More documents
    through the same builder would add more unattributable rows.
 
@@ -194,8 +197,8 @@ Ranked by licence risk, for when the corpus grows:
 | file | contents |
 | --- | --- |
 | `licence-per-document.csv` | every document with its licence, verdict and the evidence it was read from |
-| `training-exclusions.csv` | the 702 excluded documents, in the `uid,reason` shape the removal lists use |
-| `training-non-commercial.csv` | the 301 CC BY-NC documents, pending decision 2 |
+| `training-exclusions.csv` | the 1,003 excluded documents, in the `uid,reason` shape the removal lists use |
+| `training-non-commercial.csv` | the 301 CC BY-NC documents on their own, a subset of the exclusions |
 
 ## Method
 

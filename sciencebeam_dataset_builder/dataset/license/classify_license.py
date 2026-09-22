@@ -11,8 +11,9 @@ from sciencebeam_dataset_builder.dataset.license.extract_license import (
     Licence,
 )
 
+# NonCommercial blocks because the trained model is intended for commercial use.
 NO_DERIVATIVES_BLOCKS_TRAINING = True
-NON_COMMERCIAL_BLOCKS_TRAINING = False
+NON_COMMERCIAL_BLOCKS_TRAINING = True
 
 
 class TrainingUse(Enum):

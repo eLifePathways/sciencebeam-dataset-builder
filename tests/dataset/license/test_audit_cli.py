@@ -4,6 +4,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from sciencebeam_dataset_builder.dataset.license import classify_license
 from sciencebeam_dataset_builder.dataset.license.audit_cli import (
     EXCLUSIONS_FILENAME,
     NON_COMMERCIAL_FILENAME,
@@ -20,6 +21,13 @@ from sciencebeam_dataset_builder.dataset.license.audit_cli import (
 CC_BY = "https://creativecommons.org/licenses/by/4.0/"
 CC_BY_NC = "https://creativecommons.org/licenses/by-nc/4.0/"
 CC_BY_NC_ND = "https://creativecommons.org/licenses/by-nc-nd/4.0/"
+
+
+@pytest.fixture
+def block_nd_and_nc(monkeypatch):
+    """Pin the policy, so a change to the shipped flags does not break these tests."""
+    monkeypatch.setattr(classify_license, "NO_DERIVATIVES_BLOCKS_TRAINING", True)
+    monkeypatch.setattr(classify_license, "NON_COMMERCIAL_BLOCKS_TRAINING", True)
 
 
 def jats(href: str | None) -> str:
@@ -171,13 +179,20 @@ class TestWriteReports:
         assert tuple(rows[0]) == PER_DOCUMENT_HEADER
         assert len(rows) == 5
 
-    def test_exclusions_hold_only_excluded_documents(self, snapshot, tmp_path):
+    def test_exclusions_hold_only_excluded_documents(
+        self, snapshot, tmp_path, block_nd_and_nc
+    ):
         out = tmp_path / "reports"
         write_reports(audit_snapshot(snapshot), out)
         with (out / EXCLUSIONS_FILENAME).open(newline="") as handle:
             rows = list(csv.DictReader(handle))
-        assert [row["uid"] for row in rows] == ["biorxiv__b", "biorxiv__d"]
+        assert [row["uid"] for row in rows] == [
+            "biorxiv__b",
+            "biorxiv__c",
+            "biorxiv__d",
+        ]
         assert "no-derivatives" in rows[0]["reason"]
+        assert "non-commercial" in rows[1]["reason"]
 
     def test_non_commercial_is_listed_separately(self, snapshot, tmp_path):
         out = tmp_path / "reports"
@@ -204,10 +219,12 @@ class TestMain:
         assert main(["--dataset-dir", str(snapshot), "--output-dir", str(out)]) == 0
         assert (out / PER_DOCUMENT_FILENAME).exists()
 
-    def test_reports_the_excluded_count(self, snapshot, tmp_path, capsys):
+    def test_reports_the_excluded_count(
+        self, snapshot, tmp_path, capsys, block_nd_and_nc
+    ):
         out = tmp_path / "reports"
         main(["--dataset-dir", str(snapshot), "--output-dir", str(out)])
-        assert "excluded from training: 2 of 4" in capsys.readouterr().out
+        assert "excluded from training: 3 of 4" in capsys.readouterr().out
 
     def test_returns_a_failure_code_without_writing(self, tmp_path, capsys):
         out = tmp_path / "reports"
