@@ -36,6 +36,11 @@ class Corpus:
     legacy_config: str
     """The config in `benchmark-v002` this corpus is read from when it is built."""
 
+    languages: tuple[str, ...]
+    """ISO 639-1 codes observed in the corpus, most frequent first. Empty where none are
+    recorded, which is why the card omits the field rather than guessing: declaring a
+    language a corpus is not in is worse than declaring none."""
+
     description: str
 
     def repo_id(self, tier: Tier) -> str:
@@ -54,6 +59,7 @@ CORPORA: dict[str, Corpus] = {
         tiers=(Tier.OPEN, Tier.RESTRICTED),
         pairings=(PAIRING_PDF_JATS,),
         legacy_config="biorxiv-jats",
+        languages=("en",),
         description="bioRxiv preprints with publisher JATS full text.",
     ),
     "ore": Corpus(
@@ -62,6 +68,7 @@ CORPORA: dict[str, Corpus] = {
         tiers=(Tier.OPEN,),
         pairings=(PAIRING_PDF_JATS,),
         legacy_config="ore-jats",
+        languages=("en",),
         description="Open Research Europe articles.",
     ),
     "pkp": Corpus(
@@ -70,6 +77,7 @@ CORPORA: dict[str, Corpus] = {
         tiers=(Tier.RESTRICTED,),
         pairings=(PAIRING_PDF_JATS,),
         legacy_config="pkp-jats",
+        languages=(),
         description="Articles from OJS journals using the PKP JATS plugin.",
     ),
     "scielo-br": Corpus(
@@ -78,6 +86,7 @@ CORPORA: dict[str, Corpus] = {
         tiers=(Tier.OPEN, Tier.RESTRICTED),
         pairings=(PAIRING_PDF_JATS,),
         legacy_config="scielo_br-jats",
+        languages=("pt", "en", "es"),
         description="SciELO Brazil articles.",
     ),
     "scielo-mx": Corpus(
@@ -86,6 +95,7 @@ CORPORA: dict[str, Corpus] = {
         tiers=(Tier.RESTRICTED,),
         pairings=(PAIRING_PDF_JATS,),
         legacy_config="scielo_mx-jats",
+        languages=("es", "en"),
         description="SciELO Mexico articles.",
     ),
     "scielo-preprints": Corpus(
@@ -94,6 +104,7 @@ CORPORA: dict[str, Corpus] = {
         tiers=(Tier.OPEN,),
         pairings=(PAIRING_PDF_JATS,),
         legacy_config="scielo-preprints-jats",
+        languages=("pt", "es", "fr"),
         description="SciELO Preprints for which a EuropePMC JATS full text exists.",
     ),
 }
