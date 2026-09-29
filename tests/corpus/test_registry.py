@@ -14,16 +14,16 @@ from sciencebeam_dataset_builder.corpus.registry import (
 class TestTheEstate:
     def test_it_is_the_eight_repos_the_layout_note_names(self):
         assert repo_ids(Tier.OPEN) == [
-            "elifepathways/sciencebeam-corpus-biorxiv-open",
-            "elifepathways/sciencebeam-corpus-ore-open",
-            "elifepathways/sciencebeam-corpus-scielo-br-open",
-            "elifepathways/sciencebeam-corpus-scielo-preprints-open",
+            "elifepathways/sciencebeam-dataset-biorxiv",
+            "elifepathways/sciencebeam-dataset-ore",
+            "elifepathways/sciencebeam-dataset-scielo-br",
+            "elifepathways/sciencebeam-dataset-scielo-preprints",
         ]
         assert repo_ids(Tier.RESTRICTED) == [
-            "elifepathways/sciencebeam-corpus-biorxiv-restricted",
-            "elifepathways/sciencebeam-corpus-pkp-restricted",
-            "elifepathways/sciencebeam-corpus-scielo-br-restricted",
-            "elifepathways/sciencebeam-corpus-scielo-mx-restricted",
+            "elifepathways/sciencebeam-dataset-biorxiv-restricted",
+            "elifepathways/sciencebeam-dataset-pkp-restricted",
+            "elifepathways/sciencebeam-dataset-scielo-br-restricted",
+            "elifepathways/sciencebeam-dataset-scielo-mx-restricted",
         ]
         assert len(repos()) == 8
 

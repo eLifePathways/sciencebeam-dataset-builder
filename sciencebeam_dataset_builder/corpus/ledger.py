@@ -191,33 +191,6 @@ def write_membership(path: Path, rows: Iterable[Membership]) -> None:
             writer.writerow({field: getattr(row, field) for field in MEMBERSHIP_FIELDS})
 
 
-def render_changelog(changes: Sequence[Change]) -> str:
-    """Render the ledger as Markdown, newest release first.
-
-    Generated rather than written, so it cannot disagree with the ledger.
-    """
-    by_release: dict[str, list[Change]] = {}
-    for change in changes:
-        by_release.setdefault(change.release, []).append(change)
-
-    lines = [
-        "# Changelog",
-        "",
-        "Generated from `document-changes.csv`. Do not edit.",
-    ]
-    for release in sorted(by_release, key=version_key, reverse=True):
-        counts = [
-            (
-                change_type.value,
-                sum(1 for c in by_release[release] if c.change_type is change_type),
-            )
-            for change_type in ChangeType
-        ]
-        summary = ", ".join(f"{name} {count}" for name, count in counts if count)
-        lines += ["", f"## {release}", "", summary or "no document changes"]
-    return "\n".join(lines) + "\n"
-
-
 def _change_from_row(row: dict[str, str | None], path: Path) -> Change:
     raw_id = (row.get("change_id") or "").strip()
     try:

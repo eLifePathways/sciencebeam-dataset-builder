@@ -5,9 +5,9 @@ from fnmatch import fnmatch
 import pytest
 
 from sciencebeam_dataset_builder.corpus.layout import (
+    REMOVALS_PATH,
     LayoutError,
     Tier,
-    aggregate_repo_id,
     config_name,
     correction_paths,
     corrected_ids,
@@ -27,16 +27,25 @@ from sciencebeam_dataset_builder.dataset.split import SPLIT_NAMES
 
 
 class TestRepoNaming:
-    def test_a_repo_is_named_for_its_corpus_and_what_may_be_done_with_it(self):
-        assert repo_name("biorxiv", Tier.OPEN) == "sciencebeam-corpus-biorxiv-open"
+    def test_the_public_repo_carries_no_licence_suffix(self):
+        """The suffix marks the estate side, not a permission: a wholly publishable
+        corpus should not read as a different kind of thing from a mixed one's public
+        half."""
+        assert repo_name("biorxiv", Tier.OPEN) == "sciencebeam-dataset-biorxiv"
+        assert repo_name("ore", Tier.OPEN) == "sciencebeam-dataset-ore"
+
+    def test_the_restricted_repo_is_suffixed(self):
         assert (
             repo_name("scielo-br", Tier.RESTRICTED)
-            == "sciencebeam-corpus-scielo-br-restricted"
+            == "sciencebeam-dataset-scielo-br-restricted"
         )
 
     def test_the_hub_id_carries_the_org(self):
-        assert repo_id("ore", Tier.OPEN) == "elifepathways/sciencebeam-corpus-ore-open"
-        assert aggregate_repo_id() == "elifepathways/sciencebeam-corpora-open"
+        assert repo_id("ore", Tier.OPEN) == "elifepathways/sciencebeam-dataset-ore"
+        assert (
+            repo_id("ore", Tier.RESTRICTED)
+            == "elifepathways/sciencebeam-dataset-ore-restricted"
+        )
 
     def test_only_the_open_tier_is_public(self):
         assert Tier.OPEN.public
@@ -145,19 +154,19 @@ class TestReleases:
 
 
 class TestCorrections:
-    def test_a_correction_is_flat_by_id(self):
+    def test_a_correction_is_flat_by_id_under_changes_corrections(self):
         paths = correction_paths("10.1101_2021.04.23.440814")
-        assert paths.directory == "corrections/10.1101_2021.04.23.440814"
-        assert paths.upstream == "corrections/10.1101_2021.04.23.440814/upstream.xml"
-        assert paths.corrected == "corrections/10.1101_2021.04.23.440814/corrected.xml"
-        assert paths.metadata == "corrections/10.1101_2021.04.23.440814/correction.yml"
+        directory = "changes/corrections/10.1101_2021.04.23.440814"
+        assert paths.directory == directory
+        assert paths.corrected == f"{directory}/corrected.xml"
+        assert paths.metadata == f"{directory}/correction.yml"
 
     def test_corrected_documents_are_found_by_their_corrected_file(self):
         files = [
-            "corrections/4-121_v2/upstream.xml",
-            "corrections/4-121_v2/corrected.xml",
-            "corrections/PPR459180/corrected.xml",
-            "corrections/PPR459180/correction.yml",
+            "changes/corrections/4-121_v2/corrected.xml",
+            "changes/corrections/PPR459180/corrected.xml",
+            "changes/corrections/PPR459180/correction.yml",
+            "changes/removals/removals.yml",
             "pdf-jats/train/train-00000.parquet",
         ]
         assert corrected_ids(files) == ["4-121_v2", "PPR459180"]
@@ -165,3 +174,8 @@ class TestCorrections:
     def test_an_id_that_cannot_be_a_path_component_is_refused(self):
         with pytest.raises(LayoutError):
             correction_paths("10.1101/2021.04.23.440814")
+
+
+class TestRemovals:
+    def test_removals_live_in_one_file_for_the_whole_repo(self):
+        assert REMOVALS_PATH == "changes/removals/removals.yml"

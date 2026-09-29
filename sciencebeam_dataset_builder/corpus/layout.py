@@ -14,8 +14,7 @@ from enum import Enum
 from sciencebeam_dataset_builder.dataset.split import SPLIT_NAMES
 
 ORG = "elifepathways"
-REPO_PREFIX = "sciencebeam-corpus"
-AGGREGATE_REPO = "sciencebeam-corpora"
+REPO_PREFIX = "sciencebeam-dataset"
 
 # The pairing is (input format, target format). It is a directory rather than a column, so a
 # future `docx-jats` is a new folder instead of a move of every existing file.
@@ -23,13 +22,18 @@ PAIRING_PDF_JATS = "pdf-jats"
 PAIRING_PDF_DUBLIN_CORE = "pdf-dublin-core"
 
 RELEASES_DIRECTORY = "releases"
-CORRECTIONS_DIRECTORY = "corrections"
+CHANGES_DIRECTORY = "changes"
+CORRECTIONS_DIRECTORY = f"{CHANGES_DIRECTORY}/corrections"
+REMOVALS_DIRECTORY = f"{CHANGES_DIRECTORY}/removals"
 
 LEDGER_PATH = f"{RELEASES_DIRECTORY}/document-changes.csv"
-CHANGELOG_PATH = f"{RELEASES_DIRECTORY}/CHANGELOG.md"
 CARD_PATH = "README.md"
 
-UPSTREAM_FILENAME = "upstream.xml"
+REMOVALS_FILENAME = "removals.yml"
+REMOVALS_PATH = f"{REMOVALS_DIRECTORY}/{REMOVALS_FILENAME}"
+
+# No `upstream.xml`: the first commit of `corrected.xml` is upstream, so `git log -p` on
+# that one file shows every fix as a readable diff without a second file to keep in sync.
 CORRECTED_FILENAME = "corrected.xml"
 CORRECTION_METADATA_FILENAME = "correction.yml"
 
@@ -62,24 +66,20 @@ class CorrectionPaths:
     """Where one document's correction lives in the repo."""
 
     directory: str
-    upstream: str
     corrected: str
     metadata: str
 
 
 def repo_name(corpus: str, tier: Tier) -> str:
-    """`sciencebeam-corpus-biorxiv-open`."""
+    """`sciencebeam-dataset-ore` public, `sciencebeam-dataset-biorxiv-restricted` private."""
     _check_names_a_path_component(corpus, "corpus")
-    return f"{REPO_PREFIX}-{corpus}-{tier.value}"
+    suffix = "" if tier is Tier.OPEN else f"-{tier.value}"
+    return f"{REPO_PREFIX}-{corpus}{suffix}"
 
 
 def repo_id(corpus: str, tier: Tier) -> str:
     """The Hub id, org included."""
     return f"{ORG}/{repo_name(corpus, tier)}"
-
-
-def aggregate_repo_id(tier: Tier = Tier.OPEN) -> str:
-    return f"{ORG}/{AGGREGATE_REPO}-{tier.value}"
 
 
 def split_directory(pairing: str, split: str) -> str:
@@ -189,7 +189,6 @@ def correction_paths(id_value: str) -> CorrectionPaths:
     directory = f"{CORRECTIONS_DIRECTORY}/{id_value}"
     return CorrectionPaths(
         directory=directory,
-        upstream=f"{directory}/{UPSTREAM_FILENAME}",
         corrected=f"{directory}/{CORRECTED_FILENAME}",
         metadata=f"{directory}/{CORRECTION_METADATA_FILENAME}",
     )
@@ -199,11 +198,13 @@ def corrected_ids(files: Iterable[str]) -> list[str]:
     """Every document with a correction directory, by `id`."""
     prefix = f"{CORRECTIONS_DIRECTORY}/"
     suffix = f"/{CORRECTED_FILENAME}"
-    return sorted(
-        f[len(prefix) : -len(suffix)]
-        for f in files
-        if f.startswith(prefix) and f.endswith(suffix) and f.count("/") == 2
-    )
+    ids = []
+    for f in files:
+        if f.startswith(prefix) and f.endswith(suffix):
+            middle = f[len(prefix) : -len(suffix)]
+            if middle and "/" not in middle:
+                ids.append(middle)
+    return sorted(ids)
 
 
 def _check_split(split: str) -> None:

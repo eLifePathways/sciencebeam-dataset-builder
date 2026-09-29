@@ -16,7 +16,6 @@ from sciencebeam_dataset_builder.corpus.ledger import (
     next_change_id,
     read_ledger,
     read_membership,
-    render_changelog,
     write_ledger,
     write_membership,
 )
@@ -164,31 +163,3 @@ class TestMembership:
         )
         with pytest.raises(LedgerError, match="more than once"):
             read_membership(path)
-
-
-class TestChangelog:
-    def test_releases_are_newest_first_and_ordered_numerically(self):
-        """v1.10.0 is newer than v1.9.0, which sorting the strings would get wrong."""
-        changes = [
-            _change(1, release="v1.9.0"),
-            _change(2, release="v1.10.0"),
-            _change(3, release="v1.0.0"),
-        ]
-        rendered = render_changelog(changes)
-        assert rendered.index("## v1.10.0") < rendered.index("## v1.9.0")
-        assert rendered.index("## v1.9.0") < rendered.index("## v1.0.0")
-
-    def test_a_release_is_summarised_by_counts_per_change_type(self):
-        changes = assign_change_ids(
-            [
-                _pending("biorxiv__a"),
-                _pending("biorxiv__b"),
-                _pending("biorxiv__c", ChangeType.REMOVED, "editorial"),
-            ],
-            "v2.0.0",
-            WHEN,
-        )
-        assert "added 2, removed 1" in render_changelog(changes)
-
-    def test_it_says_it_is_generated(self):
-        assert "Do not edit" in render_changelog([_change(1)])
