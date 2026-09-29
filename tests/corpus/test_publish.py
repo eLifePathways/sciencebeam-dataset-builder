@@ -26,16 +26,15 @@ WHEN = datetime(2026, 10, 1, 9, 14, 22, tzinfo=UTC)
 BIORXIV = CORPORA["biorxiv"]
 
 
-def _table(uids: list[str]) -> pa.Table:
-    rows = len(uids)
+def _table(ids: list[str]) -> pa.Table:
+    rows = len(ids)
     return pa.table(
         {
-            "source": ["biorxiv"] * rows,
-            "id": [u.split("__")[1] for u in uids],
-            "uid": uids,
+            "id": ids,
             "doi": [None] * rows,
             "version": [None] * rows,
             "pub_date": [None] * rows,
+            "licence": ["CC BY 4.0"] * rows,
             "xml_ftfy_applied": [None] * rows,
             "xml_upstream_sha": ["0" * 64] * rows,
             "xml_source_url": [None] * rows,
@@ -45,14 +44,18 @@ def _table(uids: list[str]) -> pa.Table:
             "row_updated_at": ["2026-10-01T00:00:00Z"] * rows,
             "pdf": [b"pdf"] * rows,
             "xml": ["<article/>"] * rows,
+            "xml_upstream": [None] * rows,
         },
         schema=CORPUS_SCHEMA,
     )
 
 
-def _pending(uid: str) -> PendingChange:
+def _pending(id_value: str) -> PendingChange:
+    # Membership and PendingChange still carry their old (uid, source, split) shape -
+    # that rework is a separate commit. Here `uid` holds the bare `id`, an acknowledged
+    # interim mismatch rather than a real uid.
     return PendingChange(
-        uid=uid,
+        uid=id_value,
         source="biorxiv",
         split="train",
         change_type=ChangeType.ADDED,
@@ -61,20 +64,20 @@ def _pending(uid: str) -> PendingChange:
     )
 
 
-SPLITS = {"biorxiv__a": "train", "biorxiv__b": "test", "biorxiv__c": "test"}
+SPLITS = {"a": "train", "b": "test", "c": "test"}
 
 
 def _prepare(tmp_path, **kwargs):
-    uids = kwargs.pop("uids", list(SPLITS))
+    ids = kwargs.pop("ids", list(SPLITS))
     return prepare_release(
         corpus=BIORXIV,
         tier=Tier.OPEN,
         pairing="pdf-jats",
-        table=_table(uids),
+        table=_table(ids),
         splits=SPLITS,
         version=kwargs.pop("version", "v1.0.0"),
         output_dir=tmp_path,
-        pending=[_pending(u) for u in uids],
+        pending=[_pending(i) for i in ids],
         timestamp=WHEN,
         **kwargs,
     )
@@ -90,16 +93,13 @@ class TestAssembling:
     def test_rows_are_placed_by_their_carried_label(self, tmp_path):
         release = _prepare(tmp_path)
         train = read_shard(str(release.root / "pdf-jats/train/train-00000.parquet"))
-        assert train.column("uid").to_pylist() == ["biorxiv__a"]
+        assert train.column("id").to_pylist() == ["a"]
 
-    def test_it_writes_the_ledger_the_manifest_the_changelog_and_the_card(
-        self, tmp_path
-    ):
+    def test_it_writes_the_ledger_the_manifest_and_the_card(self, tmp_path):
         release = _prepare(tmp_path)
         for path in (
             "releases/document-changes.csv",
             "releases/v1.0.0.csv",
-            "releases/CHANGELOG.md",
             "README.md",
         ):
             assert path in release.paths
@@ -133,7 +133,7 @@ class TestRefusals:
     def test_a_row_with_no_carried_label_is_refused(self, tmp_path):
         """A label is carried from the source release, never invented at publish time."""
         with pytest.raises(PublishError, match="no split label"):
-            _prepare(tmp_path, uids=["biorxiv__a", "biorxiv__unlabelled"])
+            _prepare(tmp_path, ids=["a", "unlabelled"])
 
     def test_a_pairing_the_corpus_does_not_publish_is_refused(self, tmp_path):
         with pytest.raises(PublishError, match="does not publish"):
@@ -141,7 +141,7 @@ class TestRefusals:
                 corpus=BIORXIV,
                 tier=Tier.OPEN,
                 pairing="docx-jats",
-                table=_table(["biorxiv__a"]),
+                table=_table(["a"]),
                 splits=SPLITS,
                 version="v1.0.0",
                 output_dir=tmp_path,
@@ -153,11 +153,11 @@ class TestRefusals:
 class TestVerification:
     def test_a_release_matching_its_source_passes(self, tmp_path):
         release = _prepare(tmp_path)
-        source = [Membership(uid, "biorxiv", split) for uid, split in SPLITS.items()]
+        source = [Membership(id_, "biorxiv", split) for id_, split in SPLITS.items()]
         assert verify_release(source, {Tier.OPEN: release}) == []
 
     def test_a_document_that_did_not_reach_either_half_is_caught(self, tmp_path):
-        release = _prepare(tmp_path, uids=["biorxiv__a"])
-        source = [Membership(uid, "biorxiv", split) for uid, split in SPLITS.items()]
+        release = _prepare(tmp_path, ids=["a"])
+        source = [Membership(id_, "biorxiv", split) for id_, split in SPLITS.items()]
         violations = verify_release(source, {Tier.OPEN: release})
         assert any("lost" in v.detail for v in violations)

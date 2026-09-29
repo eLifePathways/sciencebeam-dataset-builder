@@ -15,15 +15,17 @@ from sciencebeam_dataset_builder.corpus.parquet_io import (
 from sciencebeam_dataset_builder.corpus.schema import CORPUS_SCHEMA
 
 
-def _table(sizes: list[int]) -> pa.Table:
+def _table(
+    sizes: list[int], upstream_sizes: list[int | None] | None = None
+) -> pa.Table:
     rows = len(sizes)
+    upstream_sizes = upstream_sizes or [None] * rows
     columns = {
-        "source": ["biorxiv"] * rows,
         "id": [f"d{i}" for i in range(rows)],
-        "uid": [f"biorxiv__d{i}" for i in range(rows)],
         "doi": [None] * rows,
         "version": [None] * rows,
         "pub_date": [None] * rows,
+        "licence": ["CC BY 4.0"] * rows,
         "xml_ftfy_applied": [None] * rows,
         "xml_upstream_sha": ["0" * 64] * rows,
         "xml_source_url": [None] * rows,
@@ -33,6 +35,7 @@ def _table(sizes: list[int]) -> pa.Table:
         "row_updated_at": ["2026-10-01T00:00:00Z"] * rows,
         "pdf": [b"p" * size for size in sizes],
         "xml": ["x" * size for size in sizes],
+        "xml_upstream": [("u" * s) if s is not None else None for s in upstream_sizes],
     }
     return pa.table(columns, schema=CORPUS_SCHEMA)
 
@@ -65,14 +68,22 @@ class TestSharding:
     def test_payload_size_is_measured_per_row(self):
         assert row_payload_bytes(_table([10, 20])) == [20, 40]
 
+    def test_xml_upstream_counts_toward_payload_size_where_corrected(self):
+        """A corrected row carries a full second copy of the text, which has to be
+        weighed like any other payload column or shards silently grow past target."""
+        assert row_payload_bytes(_table([10, 20], upstream_sizes=[15, None])) == [
+            35,
+            40,
+        ]
+
     def test_a_table_under_the_limit_is_one_shard(self):
         assert len(shard_tables(_table([10, 20]), max_bytes=1000)) == 1
 
     def test_shards_are_cut_at_the_limit_and_keep_row_order(self):
         shards = shard_tables(_table([100, 100, 100]), max_bytes=400)
         assert [s.num_rows for s in shards] == [2, 1]
-        assert shards[0].column("uid").to_pylist() == ["biorxiv__d0", "biorxiv__d1"]
-        assert shards[1].column("uid").to_pylist() == ["biorxiv__d2"]
+        assert shards[0].column("id").to_pylist() == ["d0", "d1"]
+        assert shards[1].column("id").to_pylist() == ["d2"]
 
     def test_a_row_larger_than_the_limit_gets_its_own_shard(self):
         """Rather than being split, which would make it unreadable."""

@@ -21,7 +21,6 @@ from sciencebeam_dataset_builder.corpus.ledger import (
     Membership,
     PendingChange,
     assign_change_ids,
-    render_changelog,
     write_ledger,
     write_membership,
 )
@@ -59,8 +58,8 @@ class PreparedRelease:
 
 def rows_for_split(table: pa.Table, splits: Mapping[str, str], split: str) -> pa.Table:
     """The rows labelled `split`, in the order they arrived."""
-    wanted = [uid for uid, name in splits.items() if name == split]
-    mask = pc.is_in(table.column("uid"), value_set=pa.array(wanted, type=pa.string()))
+    wanted = [id_value for id_value, name in splits.items() if name == split]
+    mask = pc.is_in(table.column("id"), value_set=pa.array(wanted, type=pa.string()))
     return table.filter(mask)
 
 
@@ -81,7 +80,11 @@ def prepare_release(
     """Write one repo's release under `output_dir`, ready to upload."""
     if pairing not in corpus.pairings:
         raise PublishError(f"{corpus.name!r} does not publish {pairing!r}")
-    missing = [uid for uid in table.column("uid").to_pylist() if uid not in splits]
+    missing = [
+        id_value
+        for id_value in table.column("id").to_pylist()
+        if id_value not in splits
+    ]
     if missing:
         raise PublishError(
             f"{len(missing)} row(s) have no split label, e.g. {missing[:3]}. A label is "
@@ -97,8 +100,11 @@ def prepare_release(
         rows = rows_for_split(table, splits, split)
         counts[split] = rows.num_rows
         membership.extend(
-            Membership(uid=uid, source=corpus.source, split=split)
-            for uid in rows.column("uid").to_pylist()
+            # Membership still has (uid, source, split): its shape is due for the same
+            # rework as the rest of the ledger, deferred to keep this change small. The
+            # bare id is stored under `uid` here as an interim, acknowledged mismatch.
+            Membership(uid=id_value, source=corpus.source, split=split)
+            for id_value in rows.column("id").to_pylist()
         )
         index = layout.next_shard_index(existing_files, pairing, split)
         for shard in shard_tables(rows, max_bytes=max_shard_bytes):
@@ -117,11 +123,6 @@ def prepare_release(
     manifest_path = layout.release_manifest_path(version)
     write_membership(_local(root, manifest_path), membership)
     paths.append(manifest_path)
-
-    _local(root, layout.CHANGELOG_PATH).write_text(
-        render_changelog(all_changes), encoding="utf-8"
-    )
-    paths.append(layout.CHANGELOG_PATH)
 
     _local(root, layout.CARD_PATH).write_text(
         render_card(corpus, tier, by_pairing), encoding="utf-8"

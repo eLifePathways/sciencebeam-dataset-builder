@@ -22,7 +22,9 @@ COMPRESSION = "snappy"
 # the version is pinned here and a mismatch fails rather than silently rewriting.
 PINNED_PYARROW = "23.0.1"
 
-PAYLOAD_COLUMNS = ("pdf", "xml")
+# `xml_upstream` is null for almost every row, but a corrected document carries a full
+# second copy of the text, so it counts toward shard size like any other payload column.
+PAYLOAD_COLUMNS = ("pdf", "xml", "xml_upstream")
 
 
 class ParquetIOError(ValueError):

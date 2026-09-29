@@ -1,26 +1,23 @@
-"""Tests for corpus.schema — the 15-column contract every published repo conforms to."""
+"""Tests for corpus.schema — the 16-column contract every published repo conforms to."""
 
 import pyarrow as pa
-import pytest
 
 from sciencebeam_dataset_builder.corpus.schema import (
     CORPUS_SCHEMA,
     FIELD_DESCRIPTIONS,
     FIELD_NAMES,
-    make_uid,
-    split_uid,
+    LICENCE_NOT_AVAILABLE,
 )
 
 
 class TestSchema:
-    def test_it_is_the_fifteen_columns_the_spec_names_in_order(self):
+    def test_it_is_the_sixteen_columns_the_spec_names_in_order(self):
         assert FIELD_NAMES == (
-            "source",
             "id",
-            "uid",
             "doi",
             "version",
             "pub_date",
+            "licence",
             "xml_ftfy_applied",
             "xml_upstream_sha",
             "xml_source_url",
@@ -30,26 +27,43 @@ class TestSchema:
             "row_updated_at",
             "pdf",
             "xml",
+            "xml_upstream",
         )
 
+    def test_there_is_no_source_or_uid_column(self):
+        """The repo already is one corpus, so `id` alone identifies a row within it. A
+        globally unique key, when one is needed outside the repo, is `(corpus, id)` -
+        computed on demand from the registry, never stored."""
+        assert "source" not in FIELD_NAMES
+        assert "uid" not in FIELD_NAMES
+
     def test_the_large_stable_payload_column_is_written_first(self):
-        """Parquet writes columns in schema order. `pdf` ahead of the column corrections
+        """Parquet writes columns in schema order. `pdf` ahead of the columns corrections
         churn is what keeps unchanged pages byte-identical for content-defined chunking."""
         assert FIELD_NAMES.index("pdf") < FIELD_NAMES.index("xml")
+        assert FIELD_NAMES.index("pdf") < FIELD_NAMES.index("xml_upstream")
 
     def test_identity_provenance_anchors_and_payload_are_not_nullable(self):
         required = {
             name for name in FIELD_NAMES if not CORPUS_SCHEMA.field(name).nullable
         }
         assert required == {
-            "source",
             "id",
-            "uid",
+            "licence",
             "xml_upstream_sha",
             "row_updated_at",
             "xml",
             "pdf",
         }
+
+    def test_xml_upstream_is_nullable_and_only_populated_where_corrected(self):
+        assert CORPUS_SCHEMA.field("xml_upstream").nullable
+
+    def test_a_missing_licence_is_a_stated_value_not_a_null(self):
+        """So the column can stay non-nullable: a repo the licence audit never reached
+        and a document with genuinely no recoverable licence should not look the same as
+        each other, but neither should ever be an empty string or null."""
+        assert LICENCE_NOT_AVAILABLE == "N/A"
 
     def test_the_payload_types_survive_a_round_trip(self):
         table = pa.table(
@@ -67,20 +81,3 @@ class TestSchema:
         """The card is generated from these, so a new column without one publishes a blank
         cell rather than failing."""
         assert set(FIELD_DESCRIPTIONS) == set(FIELD_NAMES)
-
-
-class TestUid:
-    def test_a_uid_is_the_source_and_the_source_native_id(self):
-        assert make_uid("biorxiv", "10.1101_588491") == "biorxiv__10.1101_588491"
-
-    def test_a_uid_splits_back_into_its_parts(self):
-        assert split_uid("biorxiv__10.1101_588491") == ("biorxiv", "10.1101_588491")
-
-    def test_an_id_containing_the_separator_would_split_at_the_first_one(self):
-        """No known source-native id contains it. A new source whose ids do would break
-        this, which is why `source` values are frozen and ids are checked on harvest."""
-        assert split_uid(make_uid("s", "a__b")) == ("s", "a__b")
-
-    def test_something_that_is_not_a_uid_is_refused(self):
-        with pytest.raises(ValueError):
-            split_uid("10.1101_588491")
