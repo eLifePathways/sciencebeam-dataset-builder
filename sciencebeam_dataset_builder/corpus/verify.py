@@ -11,6 +11,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from sciencebeam_dataset_builder.corpus.ledger import Membership
+from sciencebeam_dataset_builder.corpus.routing import PUBLISHABLE_LICENCES
 from sciencebeam_dataset_builder.dataset.split import DEFAULT_FRACTIONS, assign_split
 
 
@@ -102,6 +103,18 @@ def new_documents_follow_the_hash(
     return [
         Violation("new documents follow the hash", f"{len(wrong)}, e.g. {wrong[:3]}")
     ]
+
+
+def licences_are_publishable(licences: Iterable[str]) -> list[Violation]:
+    """Every row in an open repo carries a licence the estate has enumerated as
+    publishable, checked against the actual data rather than asserted as a card string.
+    """
+    bad = sorted(
+        {licence for licence in licences if licence not in PUBLISHABLE_LICENCES}
+    )
+    if not bad:
+        return []
+    return [Violation("licences are publishable", f"found {bad} in an open repo")]
 
 
 def verify_corpus(

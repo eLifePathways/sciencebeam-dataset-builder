@@ -6,6 +6,7 @@ from sciencebeam_dataset_builder.corpus.ledger import Membership
 from sciencebeam_dataset_builder.corpus.verify import (
     VerificationError,
     halves_are_disjoint,
+    licences_are_publishable,
     new_documents_follow_the_hash,
     raise_if_violated,
     splits_are_carried,
@@ -94,6 +95,22 @@ class TestNewDocumentsFollowTheHash:
             new_documents_follow_the_hash(["biorxiv__old"], [_row("biorxiv__old")])
             == []
         )
+
+
+class TestLicencesArePublishable:
+    def test_only_enumerated_licences_pass(self):
+        assert licences_are_publishable(["CC BY 4.0", "CC0 1.0"]) == []
+
+    def test_anything_else_is_reported(self):
+        """Checked against the actual data, not asserted as a card string: a document
+        routed to the open repo on a bad licence should never go unnoticed."""
+        violations = licences_are_publishable(["CC BY 4.0", "CC BY-NC 4.0"])
+        assert len(violations) == 1
+        assert "CC BY-NC 4.0" in violations[0].detail
+
+    def test_an_empty_licence_is_also_not_publishable(self):
+        """A licence that was never recorded fails the same way a restricted one does."""
+        assert licences_are_publishable(["CC BY 4.0", ""]) != []
 
 
 class TestVerifyCorpus:
