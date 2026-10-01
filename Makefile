@@ -36,7 +36,8 @@ LICENCE_REPORTS_DIR ?= ./sciencebeam_dataset_builder/dataset/license/reports
 	migrate-dry-run migrate verify migrate-upload \
 	remove-dry-run remove verify-removal remove-upload \
 	licence-audit \
-	archive-cut archive-cut-render archive-cut-publish
+	archive-cut archive-cut-render archive-cut-publish \
+	corpus-create-repo corpus-create-all-repos
 
 install:
 	uv sync --frozen
@@ -177,3 +178,14 @@ biorxiv-jats-upload-to-hf:
 		$(OUTPUT_DIR)/biorxiv-jats-hf-dataset \
 		biorxiv-jats \
 		--type dataset
+
+# Create one corpus repo, private, and upload its generated card.
+# CORPUS and TIER are required, e.g. `make corpus-create-repo CORPUS=biorxiv TIER=open`.
+# Creating a repo is reversible and never makes anything public on its own.
+corpus-create-repo:
+	uv run -m sciencebeam_dataset_builder.corpus.create_repo_cli \
+		--corpus $(CORPUS) --tier $(TIER) $(RUN_ARGS)
+
+# Create every repo the registry declares, private, each with its generated card.
+corpus-create-all-repos:
+	uv run -m sciencebeam_dataset_builder.corpus.create_repo_cli --all $(RUN_ARGS)
