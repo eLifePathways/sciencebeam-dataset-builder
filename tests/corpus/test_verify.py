@@ -16,13 +16,13 @@ from sciencebeam_dataset_builder.corpus.verify import (
 from sciencebeam_dataset_builder.dataset.split import DEFAULT_FRACTIONS, assign_split
 
 
-def _row(uid: str, split: str = "train") -> Membership:
-    return Membership(uid=uid, source="biorxiv", split=split)
+def _row(id_value: str, split: str = "train") -> Membership:
+    return Membership(corpus="biorxiv", id=id_value, split=split)
 
 
-def _hashed(uid: str) -> Membership:
+def _hashed(id_value: str) -> Membership:
     return Membership(
-        uid=uid, source="biorxiv", split=assign_split(uid, DEFAULT_FRACTIONS)
+        corpus="biorxiv", id=id_value, split=assign_split(id_value, DEFAULT_FRACTIONS)
     )
 
 

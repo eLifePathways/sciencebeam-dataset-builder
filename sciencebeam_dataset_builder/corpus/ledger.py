@@ -65,18 +65,21 @@ class PendingChange:
     recorded against a release that did not happen. `local_change_id` is set only where a
     declarative file drives the change - `corrections/<id>/correction.yml`,
     `removals/removals.yml` - and is null for `added`, which arrives from a harvest with
-    nothing to be idempotent against.
+    nothing to be idempotent against. `parquet_file_name` is likewise left blank for an
+    `added` change where the shard it lands in is not yet known - `prepare_release` fills
+    it in once sharding has actually happened; a `removed` or `content-corrected` change
+    already names an existing shard, so its caller supplies it directly.
     """
 
     corpus: str
     id: str
     split: str
     file_type_pair: str
-    parquet_file_name: str
     change_type: ChangeType
     change_reason: str
     changed_by: str
     local_change_id: int | None = None
+    parquet_file_name: str = ""
 
 
 @dataclass(frozen=True)

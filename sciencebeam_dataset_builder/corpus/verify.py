@@ -38,11 +38,11 @@ def splits_are_carried(
     Removal, addition and a move between repos all keep a document where it was, so
     numbers published against an earlier release stay true of it.
     """
-    was = {row.uid: row.split for row in before}
+    was = {row.id: row.split for row in before}
     moved = sorted(
-        f"{row.uid} {was[row.uid]} -> {row.split}"
+        f"{row.id} {was[row.id]} -> {row.split}"
         for row in after
-        if row.uid in was and was[row.uid] != row.split
+        if row.id in was and was[row.id] != row.split
     )
     if not moved:
         return []
@@ -53,7 +53,7 @@ def halves_are_disjoint(
     open_rows: Sequence[Membership], restricted_rows: Sequence[Membership]
 ) -> list[Violation]:
     """A document is publishable or it is not. It cannot be in both repos."""
-    both = sorted({r.uid for r in open_rows} & {r.uid for r in restricted_rows})
+    both = sorted({r.id for r in open_rows} & {r.id for r in restricted_rows})
     if not both:
         return []
     return [Violation("halves are disjoint", f"{len(both)} in both, e.g. {both[:3]}")]
@@ -69,8 +69,8 @@ def union_reconstructs(
     Per corpus, not in total: a corpus dropped from the estate is simply absent, and
     checking the total would report that as a loss.
     """
-    expected = {(r.uid, r.split) for r in source}
-    produced = {(r.uid, r.split) for r in [*open_rows, *restricted_rows]}
+    expected = {(r.id, r.split) for r in source}
+    produced = {(r.id, r.split) for r in [*open_rows, *restricted_rows]}
     violations = []
     if lost := sorted(expected - produced):
         violations.append(
@@ -90,13 +90,17 @@ def new_documents_follow_the_hash(
     after: Sequence[Membership],
     fractions: dict[str, float] | None = None,
 ) -> list[Violation]:
-    """A document new to the estate is assigned by `sha256(uid)`, not by hand."""
+    """A document new to the estate is assigned by hashing its bare `id`.
+
+    Not `source__id`: hashing always happens inside one corpus's build, never pooled
+    across corpora, so `id` alone is exactly as collision-free there as the old `uid`.
+    """
     fractions = fractions or DEFAULT_FRACTIONS
     seen = set(known)
     wrong = sorted(
-        f"{row.uid} {row.split} != {assign_split(row.uid, fractions)}"
+        f"{row.id} {row.split} != {assign_split(row.id, fractions)}"
         for row in after
-        if row.uid not in seen and assign_split(row.uid, fractions) != row.split
+        if row.id not in seen and assign_split(row.id, fractions) != row.split
     )
     if not wrong:
         return []

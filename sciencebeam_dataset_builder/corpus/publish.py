@@ -5,8 +5,8 @@ handed to the uploader, so the checks cannot be skipped by a network call happen
 first.
 """
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -73,11 +73,20 @@ def prepare_release(
     output_dir: Path,
     pending: Sequence[PendingChange],
     timestamp: datetime,
+    base_release: str = "",
+    already_published: Collection[str] = (),
     existing_files: Sequence[str] = (),
     existing_changes: Sequence[Change] = (),
     max_shard_bytes: int = DEFAULT_SHARD_BYTES,
 ) -> PreparedRelease:
-    """Write one repo's release under `output_dir`, ready to upload."""
+    """Write one repo's release under `output_dir`, ready to upload.
+
+    `table` always carries the whole current population - carried-forward rows and new
+    ones together - because the manifest is a complete snapshot, never a diff. Only rows
+    whose `id` is absent from `already_published` are actually sharded and written: a
+    carried-forward row's bytes already exist in an earlier shard and must not be
+    duplicated into a new one just because it appears in this call's `table` too.
+    """
     if pairing not in corpus.pairings:
         raise PublishError(f"{corpus.name!r} does not publish {pairing!r}")
     missing = [
@@ -95,25 +104,43 @@ def prepare_release(
     paths: list[str] = []
     counts: dict[str, int] = {}
     membership: list[Membership] = []
+    new_shard_of: dict[str, str] = {}
 
     for split in SPLIT_NAMES:
         rows = rows_for_split(table, splits, split)
         counts[split] = rows.num_rows
         membership.extend(
-            # Membership still has (uid, source, split): its shape is due for the same
-            # rework as the rest of the ledger, deferred to keep this change small. The
-            # bare id is stored under `uid` here as an interim, acknowledged mismatch.
-            Membership(uid=id_value, source=corpus.source, split=split)
+            Membership(corpus=corpus.name, id=id_value, split=split)
             for id_value in rows.column("id").to_pylist()
         )
+
+        already = pa.array(list(already_published), type=pa.string())
+        new_rows = rows.filter(
+            pc.invert(pc.is_in(rows.column("id"), value_set=already))
+        )
+        if new_rows.num_rows == 0:
+            continue
         index = layout.next_shard_index(existing_files, pairing, split)
-        for shard in shard_tables(rows, max_bytes=max_shard_bytes):
+        for shard in shard_tables(new_rows, max_bytes=max_shard_bytes):
             path = layout.shard_path(pairing, split, index)
             write_shard(shard, str(_local(root, path)))
             paths.append(path)
+            for id_value in shard.column("id").to_pylist():
+                new_shard_of[id_value] = Path(path).name
             index += 1
 
-    changes = assign_change_ids(pending, version, timestamp, existing_changes)
+    # An `added` change names no shard until sharding has actually happened; a
+    # `removed` or `content-corrected` change already names an existing one and is
+    # left untouched.
+    stamped_pending = [
+        replace(change, parquet_file_name=new_shard_of[change.id])
+        if not change.parquet_file_name and change.id in new_shard_of
+        else change
+        for change in pending
+    ]
+    changes = assign_change_ids(
+        stamped_pending, base_release, timestamp, existing_changes
+    )
     all_changes = [*existing_changes, *changes]
     by_pairing = {pairing: counts}
 

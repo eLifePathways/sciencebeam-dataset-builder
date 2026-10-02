@@ -50,18 +50,17 @@ def _table(ids: list[str]) -> pa.Table:
     )
 
 
-def _pending(id_value: str) -> PendingChange:
-    # Membership and PendingChange still carry their old (uid, source, split) shape -
-    # that rework is a separate commit. Here `uid` holds the bare `id`, an acknowledged
-    # interim mismatch rather than a real uid.
-    return PendingChange(
-        uid=id_value,
-        source="biorxiv",
+def _pending(id_value: str, **kwargs) -> PendingChange:
+    defaults = dict(
+        corpus="biorxiv",
+        id=id_value,
         split="train",
+        file_type_pair="pdf-jats",
         change_type=ChangeType.ADDED,
-        reason="initial release",
+        change_reason="initial release",
         changed_by="hazal",
     )
+    return PendingChange(**{**defaults, **kwargs})
 
 
 SPLITS = {"a": "train", "b": "test", "c": "test"}
@@ -108,14 +107,14 @@ class TestAssembling:
     def test_the_manifest_is_the_membership_of_this_release(self, tmp_path):
         release = _prepare(tmp_path)
         recorded = read_membership(release.root / "releases/v1.0.0.csv")
-        assert {r.uid for r in recorded} == set(SPLITS)
+        assert {r.id for r in recorded} == set(SPLITS)
         assert {r.split for r in recorded} == {"train", "test"}
 
     def test_the_ledger_records_every_change_against_this_release(self, tmp_path):
         release = _prepare(tmp_path)
         recorded = read_ledger(release.root / "releases/document-changes.csv")
         assert [c.change_id for c in recorded] == [1, 2, 3]
-        assert {c.release for c in recorded} == {"v1.0.0"}
+        assert {c.base_release for c in recorded} == {""}
 
     def test_the_card_carries_this_release_counts(self, tmp_path):
         release = _prepare(tmp_path)
@@ -150,14 +149,86 @@ class TestRefusals:
             )
 
 
+class TestIncrementalBuilds:
+    def test_already_published_rows_are_not_resharded(self, tmp_path):
+        """The manifest is always a full snapshot, so `table` carries old and new rows
+        together - but only the new one may actually touch a shard."""
+        first = _prepare(tmp_path, ids=["a", "b"])  # a -> train, b -> test
+
+        second = prepare_release(
+            corpus=BIORXIV,
+            tier=Tier.OPEN,
+            pairing="pdf-jats",
+            table=_table(["a", "b", "c"]),  # c is new; a, b carried forward
+            splits=SPLITS,
+            version="v1.1.0",
+            output_dir=tmp_path,
+            pending=[_pending("c", split="test")],
+            timestamp=WHEN,
+            base_release="v1.0.0",
+            already_published={"a", "b"},
+            existing_files=first.paths,
+        )
+
+        # No new train shard: "a" was already published and nothing else is new there.
+        assert "pdf-jats/train/train-00001.parquet" not in second.paths
+        # A new test shard holds only "c" - "b" is not duplicated into it.
+        test_shard = read_shard(str(second.root / "pdf-jats/test/test-00001.parquet"))
+        assert test_shard.column("id").to_pylist() == ["c"]
+        # The manifest is still the full population: a, b and c together.
+        manifest = read_membership(second.root / "releases/v1.1.0.csv")
+        assert {r.id for r in manifest} == {"a", "b", "c"}
+
+    def test_an_added_changes_filename_is_filled_in_after_sharding(self, tmp_path):
+        release = prepare_release(
+            corpus=BIORXIV,
+            tier=Tier.OPEN,
+            pairing="pdf-jats",
+            table=_table(["a"]),
+            splits={"a": "test"},
+            version="v1.0.0",
+            output_dir=tmp_path,
+            pending=[_pending("a", split="test")],  # parquet_file_name left blank
+            timestamp=WHEN,
+        )
+        recorded = read_ledger(release.root / "releases/document-changes.csv")
+        assert recorded[0].parquet_file_name == "test-00000.parquet"
+
+    def test_a_callers_own_filename_is_left_alone(self, tmp_path):
+        """A change whose id is not newly sharded this call - a removal, or a correction
+        to a document not part of this `table` - keeps whatever filename its caller
+        already gave it."""
+        release = prepare_release(
+            corpus=BIORXIV,
+            tier=Tier.OPEN,
+            pairing="pdf-jats",
+            table=_table(["a"]),
+            splits={"a": "test"},
+            version="v1.0.0",
+            output_dir=tmp_path,
+            pending=[
+                _pending(
+                    "a",
+                    split="test",
+                    change_type=ChangeType.REMOVED,
+                    parquet_file_name="test-00003.parquet",
+                )
+            ],
+            timestamp=WHEN,
+            already_published={"a"},  # "a" is not resharded this call
+        )
+        recorded = read_ledger(release.root / "releases/document-changes.csv")
+        assert recorded[0].parquet_file_name == "test-00003.parquet"
+
+
 class TestVerification:
     def test_a_release_matching_its_source_passes(self, tmp_path):
         release = _prepare(tmp_path)
-        source = [Membership(id_, "biorxiv", split) for id_, split in SPLITS.items()]
+        source = [Membership("biorxiv", id_, split) for id_, split in SPLITS.items()]
         assert verify_release(source, {Tier.OPEN: release}) == []
 
     def test_a_document_that_did_not_reach_either_half_is_caught(self, tmp_path):
         release = _prepare(tmp_path, ids=["a"])
-        source = [Membership(id_, "biorxiv", split) for id_, split in SPLITS.items()]
+        source = [Membership("biorxiv", id_, split) for id_, split in SPLITS.items()]
         violations = verify_release(source, {Tier.OPEN: release})
         assert any("lost" in v.detail for v in violations)
