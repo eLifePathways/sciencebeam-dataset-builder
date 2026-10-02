@@ -6,6 +6,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from sciencebeam_dataset_builder.corpus import build_cli
 from sciencebeam_dataset_builder.corpus.build_cli import (
     BuildError,
     build_table,
@@ -258,3 +259,71 @@ class TestMainEndToEnd:
         _snapshot(tmp_path, "biorxiv", {"train": ["a"], "test": []})
         with pytest.raises(SystemExit, match="no longer route"):
             self._run(tmp_path, version="v1.1.0", base_release="v1.0.0")
+
+
+class TestUploadWithRetry:
+    """No real network: `HfApi` is faked, so this proves the retry logic itself rather
+    than anything about the Hub."""
+
+    def test_retries_and_succeeds_on_a_later_attempt(self, tmp_path, monkeypatch):
+        calls = []
+
+        class FakeApi:
+            def __init__(self, token):
+                self.token = token
+
+            def upload_file(self, **kwargs):
+                calls.append(kwargs)
+                if len(calls) < 2:
+                    raise RuntimeError(
+                        "Cannot send a request, as the client has been closed."
+                    )
+
+        monkeypatch.setattr("huggingface_hub.HfApi", FakeApi)
+        local = tmp_path / "f.parquet"
+        local.write_bytes(b"x")
+
+        build_cli._upload_with_retry(
+            "tok", "repo", "v1.0.0", local, "pdf-jats/train/train-00000.parquet"
+        )
+        assert len(calls) == 2
+
+    def test_gives_up_after_max_attempts(self, tmp_path, monkeypatch):
+        attempts = []
+
+        class FakeApi:
+            def __init__(self, token):
+                pass
+
+            def upload_file(self, **kwargs):
+                attempts.append(kwargs)
+                raise RuntimeError("still broken")
+
+        monkeypatch.setattr("huggingface_hub.HfApi", FakeApi)
+        local = tmp_path / "f.parquet"
+        local.write_bytes(b"x")
+
+        with pytest.raises(SystemExit, match="failed after"):
+            build_cli._upload_with_retry("tok", "repo", "v1.0.0", local, "x.parquet")
+        assert len(attempts) == build_cli.MAX_UPLOAD_ATTEMPTS
+
+    def test_each_attempt_gets_a_fresh_client(self, tmp_path, monkeypatch):
+        """A client that raised mid-transfer may be in a bad state, so a retry must
+        not reuse it."""
+        made = []
+
+        class FakeApi:
+            def __init__(self, token):
+                made.append(self)
+
+            def upload_file(self, **kwargs):
+                if len(made) < 2:
+                    raise RuntimeError("client has been closed")
+
+        monkeypatch.setattr("huggingface_hub.HfApi", FakeApi)
+        local = tmp_path / "f.parquet"
+        local.write_bytes(b"x")
+
+        build_cli._upload_with_retry("tok", "repo", "v1.0.0", local, "x.parquet")
+        assert len(made) == 2
+        assert made[0] is not made[1]

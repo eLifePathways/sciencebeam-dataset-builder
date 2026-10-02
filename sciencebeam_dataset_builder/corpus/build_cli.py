@@ -287,6 +287,9 @@ def main(argv: list[str] | None = None) -> None:
     upload_release(release)
 
 
+MAX_UPLOAD_ATTEMPTS = 3
+
+
 def upload_release(release: PreparedRelease) -> None:
     token = os.environ.get("HF_TOKEN")
     if not token:
@@ -294,25 +297,50 @@ def upload_release(release: PreparedRelease) -> None:
 
     from huggingface_hub import HfApi
 
-    api = HfApi(token=token)
-    api.create_repo(
+    HfApi(token=token).create_repo(
         repo_id=release.repo_id, repo_type="dataset", private=True, exist_ok=True
     )
 
     for path in release.paths:
         local_path = release.root / path
         local_sha = hashlib.sha256(local_path.read_bytes()).hexdigest()
-        api.upload_file(
-            path_or_fileobj=str(local_path),
-            path_in_repo=path,
-            repo_id=release.repo_id,
-            repo_type="dataset",
-            commit_message=f"Build {release.version}: {path}",
-        )
-        _verify_uploaded(api, release.repo_id, path, local_sha)
+        _upload_with_retry(token, release.repo_id, release.version, local_path, path)
+        _verify_uploaded(HfApi(token=token), release.repo_id, path, local_sha)
         print(f"  uploaded + verified: {path}")
 
     print(f"Uploaded {len(release.paths)} file(s) to {release.repo_id}")
+
+
+def _upload_with_retry(
+    token: str, repo_id: str, version: str, local_path: Path, path: str
+) -> None:
+    """Hub transfers truncate and stall rather than failing cleanly - a client that
+    raises mid-transfer may be in a bad state, so each attempt gets a fresh one rather
+    than reusing whichever client just failed.
+    """
+    from huggingface_hub import HfApi
+
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_UPLOAD_ATTEMPTS + 1):
+        try:
+            HfApi(token=token).upload_file(
+                path_or_fileobj=str(local_path),
+                path_in_repo=path,
+                repo_id=repo_id,
+                repo_type="dataset",
+                commit_message=f"Build {version}: {path}",
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 - Hub transfers fail in varied ways
+            last_error = exc
+            print(
+                f"  upload of {path} failed on attempt {attempt}/{MAX_UPLOAD_ATTEMPTS}: "
+                f"{exc}",
+                file=sys.stderr,
+            )
+    raise SystemExit(
+        f"Upload of {path} failed after {MAX_UPLOAD_ATTEMPTS} attempts: {last_error}"
+    )
 
 
 def _verify_uploaded(api: "HfApi", repo_id: str, path: str, local_sha: str) -> None:
