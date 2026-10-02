@@ -33,7 +33,9 @@ KNOWN_COUNTS: dict[tuple[str, Tier], dict[str, dict[str, int]]] = {
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--corpus", choices=sorted(CORPORA), help="One corpus, e.g. biorxiv.")
+    group.add_argument(
+        "--corpus", choices=sorted(CORPORA), help="One corpus, e.g. biorxiv."
+    )
     group.add_argument(
         "--all", action="store_true", help="Every repo the registry declares."
     )
@@ -78,7 +80,10 @@ def main(argv: list[str] | None = None) -> None:
 
     token = os.environ.get("HF_TOKEN")
     if not token:
-        print("HF_TOKEN is not set; cannot create or upload to a Hub repo.", file=sys.stderr)
+        print(
+            "HF_TOKEN is not set; cannot create or upload to a Hub repo.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     from huggingface_hub import HfApi

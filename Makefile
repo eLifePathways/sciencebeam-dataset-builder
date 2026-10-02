@@ -37,7 +37,7 @@ LICENCE_REPORTS_DIR ?= ./sciencebeam_dataset_builder/dataset/license/reports
 	remove-dry-run remove verify-removal remove-upload \
 	licence-audit \
 	archive-cut archive-cut-render archive-cut-publish \
-	corpus-create-repo corpus-create-all-repos
+	corpus-create-repo corpus-create-all-repos corpus-build corpus-build-upload
 
 install:
 	uv sync --frozen
@@ -189,3 +189,14 @@ corpus-create-repo:
 # Create every repo the registry declares, private, each with its generated card.
 corpus-create-all-repos:
 	uv run -m sciencebeam_dataset_builder.corpus.create_repo_cli --all $(RUN_ARGS)
+
+# Build one corpus/tier's release from the real snapshot under DATA_DIR, locally only.
+# CORPUS and TIER are required, e.g. `make corpus-build CORPUS=biorxiv TIER=open`.
+corpus-build:
+	uv run -m sciencebeam_dataset_builder.corpus.build_cli \
+		--corpus $(CORPUS) --tier $(TIER) --data-dir $(DATA_DIR) $(RUN_ARGS)
+
+# As corpus-build, then upload the checked local result to the Hub.
+corpus-build-upload:
+	uv run -m sciencebeam_dataset_builder.corpus.build_cli \
+		--corpus $(CORPUS) --tier $(TIER) --data-dir $(DATA_DIR) --upload $(RUN_ARGS)
