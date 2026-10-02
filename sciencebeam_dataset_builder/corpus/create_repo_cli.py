@@ -27,6 +27,13 @@ LOGGER = logging.getLogger(__name__)
 # one that visibly says the build has not run.
 KNOWN_COUNTS: dict[tuple[str, Tier], dict[str, dict[str, int]]] = {
     ("biorxiv", Tier.OPEN): {"pdf-jats": {"train": 11, "validation": 15, "test": 27}},
+    ("ore", Tier.OPEN): {"pdf-jats": {"train": 37, "validation": 58, "test": 97}},
+    ("scielo-br", Tier.OPEN): {
+        "pdf-jats": {"train": 58, "validation": 107, "test": 153}
+    },
+    ("scielo-preprints", Tier.OPEN): {
+        "pdf-jats": {"train": 83, "validation": 125, "test": 210}
+    },
 }
 
 
