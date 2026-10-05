@@ -34,6 +34,18 @@ KNOWN_COUNTS: dict[tuple[str, Tier], dict[str, dict[str, int]]] = {
     ("scielo-preprints", Tier.OPEN): {
         "pdf-jats": {"train": 83, "validation": 125, "test": 210}
     },
+    ("biorxiv", Tier.RESTRICTED): {
+        "pdf-jats": {"train": 18, "validation": 26, "test": 48}
+    },
+    ("scielo-br", Tier.RESTRICTED): {
+        "pdf-jats": {"train": 65, "validation": 74, "test": 162}
+    },
+    ("pkp", Tier.RESTRICTED): {
+        "pdf-jats": {"train": 95, "validation": 132, "test": 250}
+    },
+    ("scielo-mx", Tier.RESTRICTED): {
+        "pdf-jats": {"train": 30, "validation": 39, "test": 64}
+    },
 }
 
 
