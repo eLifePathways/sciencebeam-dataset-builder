@@ -1,0 +1,234 @@
+"""Tests for corpus.publish — assembling a release on disk."""
+
+from datetime import UTC, datetime
+
+import pyarrow as pa
+import pytest
+
+from sciencebeam_dataset_builder.corpus.layout import Tier
+from sciencebeam_dataset_builder.corpus.ledger import (
+    ChangeType,
+    Membership,
+    PendingChange,
+    read_ledger,
+    read_membership,
+)
+from sciencebeam_dataset_builder.corpus.parquet_io import read_shard
+from sciencebeam_dataset_builder.corpus.publish import (
+    PublishError,
+    prepare_release,
+    verify_release,
+)
+from sciencebeam_dataset_builder.corpus.registry import CORPORA
+from sciencebeam_dataset_builder.corpus.schema import CORPUS_SCHEMA
+
+WHEN = datetime(2026, 10, 1, 9, 14, 22, tzinfo=UTC)
+BIORXIV = CORPORA["biorxiv"]
+
+
+def _table(ids: list[str]) -> pa.Table:
+    rows = len(ids)
+    return pa.table(
+        {
+            "id": ids,
+            "doi": [None] * rows,
+            "version": [None] * rows,
+            "pub_date": [None] * rows,
+            "licence": ["CC BY 4.0"] * rows,
+            "xml_ftfy_applied": [None] * rows,
+            "xml_upstream_sha": ["0" * 64] * rows,
+            "xml_source_url": [None] * rows,
+            "xml_downloaded_at": [None] * rows,
+            "pdf_source_url": [None] * rows,
+            "pdf_downloaded_at": [None] * rows,
+            "row_updated_at": ["2026-10-01T00:00:00Z"] * rows,
+            "pdf": [b"pdf"] * rows,
+            "xml": ["<article/>"] * rows,
+            "xml_upstream": [None] * rows,
+        },
+        schema=CORPUS_SCHEMA,
+    )
+
+
+def _pending(id_value: str, **kwargs) -> PendingChange:
+    defaults = dict(
+        corpus="biorxiv",
+        id=id_value,
+        split="train",
+        file_type_pair="pdf-jats",
+        change_type=ChangeType.ADDED,
+        change_reason="initial release",
+        changed_by="hazal",
+    )
+    return PendingChange(**{**defaults, **kwargs})
+
+
+SPLITS = {"a": "train", "b": "test", "c": "test"}
+
+
+def _prepare(tmp_path, **kwargs):
+    ids = kwargs.pop("ids", list(SPLITS))
+    return prepare_release(
+        corpus=BIORXIV,
+        tier=Tier.OPEN,
+        pairing="pdf-jats",
+        table=_table(ids),
+        splits=SPLITS,
+        version=kwargs.pop("version", "v1.0.0"),
+        output_dir=tmp_path,
+        pending=[_pending(i) for i in ids],
+        timestamp=WHEN,
+        **kwargs,
+    )
+
+
+class TestAssembling:
+    def test_it_writes_a_shard_per_split_that_has_rows(self, tmp_path):
+        release = _prepare(tmp_path)
+        assert "pdf-jats/train/train-00000.parquet" in release.paths
+        assert "pdf-jats/test/test-00000.parquet" in release.paths
+        assert not any("validation" in p for p in release.paths)
+
+    def test_rows_are_placed_by_their_carried_label(self, tmp_path):
+        release = _prepare(tmp_path)
+        train = read_shard(str(release.root / "pdf-jats/train/train-00000.parquet"))
+        assert train.column("id").to_pylist() == ["a"]
+
+    def test_it_writes_the_ledger_the_manifest_and_the_card(self, tmp_path):
+        release = _prepare(tmp_path)
+        for path in (
+            "releases/document-changes.csv",
+            "releases/v1.0.0.csv",
+            "README.md",
+        ):
+            assert path in release.paths
+            assert (release.root / path).exists()
+
+    def test_the_manifest_is_the_membership_of_this_release(self, tmp_path):
+        release = _prepare(tmp_path)
+        recorded = read_membership(release.root / "releases/v1.0.0.csv")
+        assert {r.id for r in recorded} == set(SPLITS)
+        assert {r.split for r in recorded} == {"train", "test"}
+
+    def test_the_ledger_records_every_change_against_this_release(self, tmp_path):
+        release = _prepare(tmp_path)
+        recorded = read_ledger(release.root / "releases/document-changes.csv")
+        assert [c.change_id for c in recorded] == [1, 2, 3]
+        assert {c.base_release for c in recorded} == {""}
+
+    def test_the_card_carries_this_release_counts(self, tmp_path):
+        release = _prepare(tmp_path)
+        card = (release.root / "README.md").read_text(encoding="utf-8")
+        assert "| `pdf-jats` | 1 | 0 | 2 | 3 |" in card
+
+    def test_new_shards_continue_from_what_the_repo_already_has(self, tmp_path):
+        release = _prepare(
+            tmp_path, existing_files=["pdf-jats/train/train-00000.parquet"]
+        )
+        assert "pdf-jats/train/train-00001.parquet" in release.paths
+
+
+class TestRefusals:
+    def test_a_row_with_no_carried_label_is_refused(self, tmp_path):
+        """A label is carried from the source release, never invented at publish time."""
+        with pytest.raises(PublishError, match="no split label"):
+            _prepare(tmp_path, ids=["a", "unlabelled"])
+
+    def test_a_pairing_the_corpus_does_not_publish_is_refused(self, tmp_path):
+        with pytest.raises(PublishError, match="does not publish"):
+            prepare_release(
+                corpus=BIORXIV,
+                tier=Tier.OPEN,
+                pairing="docx-jats",
+                table=_table(["a"]),
+                splits=SPLITS,
+                version="v1.0.0",
+                output_dir=tmp_path,
+                pending=[],
+                timestamp=WHEN,
+            )
+
+
+class TestIncrementalBuilds:
+    def test_already_published_rows_are_not_resharded(self, tmp_path):
+        """The manifest is always a full snapshot, so `table` carries old and new rows
+        together - but only the new one may actually touch a shard."""
+        first = _prepare(tmp_path, ids=["a", "b"])  # a -> train, b -> test
+
+        second = prepare_release(
+            corpus=BIORXIV,
+            tier=Tier.OPEN,
+            pairing="pdf-jats",
+            table=_table(["a", "b", "c"]),  # c is new; a, b carried forward
+            splits=SPLITS,
+            version="v1.1.0",
+            output_dir=tmp_path,
+            pending=[_pending("c", split="test")],
+            timestamp=WHEN,
+            base_release="v1.0.0",
+            already_published={"a", "b"},
+            existing_files=first.paths,
+        )
+
+        # No new train shard: "a" was already published and nothing else is new there.
+        assert "pdf-jats/train/train-00001.parquet" not in second.paths
+        # A new test shard holds only "c" - "b" is not duplicated into it.
+        test_shard = read_shard(str(second.root / "pdf-jats/test/test-00001.parquet"))
+        assert test_shard.column("id").to_pylist() == ["c"]
+        # The manifest is still the full population: a, b and c together.
+        manifest = read_membership(second.root / "releases/v1.1.0.csv")
+        assert {r.id for r in manifest} == {"a", "b", "c"}
+
+    def test_an_added_changes_filename_is_filled_in_after_sharding(self, tmp_path):
+        release = prepare_release(
+            corpus=BIORXIV,
+            tier=Tier.OPEN,
+            pairing="pdf-jats",
+            table=_table(["a"]),
+            splits={"a": "test"},
+            version="v1.0.0",
+            output_dir=tmp_path,
+            pending=[_pending("a", split="test")],  # parquet_file_name left blank
+            timestamp=WHEN,
+        )
+        recorded = read_ledger(release.root / "releases/document-changes.csv")
+        assert recorded[0].parquet_file_name == "test-00000.parquet"
+
+    def test_a_callers_own_filename_is_left_alone(self, tmp_path):
+        """A change whose id is not newly sharded this call - a removal, or a correction
+        to a document not part of this `table` - keeps whatever filename its caller
+        already gave it."""
+        release = prepare_release(
+            corpus=BIORXIV,
+            tier=Tier.OPEN,
+            pairing="pdf-jats",
+            table=_table(["a"]),
+            splits={"a": "test"},
+            version="v1.0.0",
+            output_dir=tmp_path,
+            pending=[
+                _pending(
+                    "a",
+                    split="test",
+                    change_type=ChangeType.REMOVED,
+                    parquet_file_name="test-00003.parquet",
+                )
+            ],
+            timestamp=WHEN,
+            already_published={"a"},  # "a" is not resharded this call
+        )
+        recorded = read_ledger(release.root / "releases/document-changes.csv")
+        assert recorded[0].parquet_file_name == "test-00003.parquet"
+
+
+class TestVerification:
+    def test_a_release_matching_its_source_passes(self, tmp_path):
+        release = _prepare(tmp_path)
+        source = [Membership("biorxiv", id_, split) for id_, split in SPLITS.items()]
+        assert verify_release(source, {Tier.OPEN: release}) == []
+
+    def test_a_document_that_did_not_reach_either_half_is_caught(self, tmp_path):
+        release = _prepare(tmp_path, ids=["a"])
+        source = [Membership("biorxiv", id_, split) for id_, split in SPLITS.items()]
+        violations = verify_release(source, {Tier.OPEN: release})
+        assert any("lost" in v.detail for v in violations)
