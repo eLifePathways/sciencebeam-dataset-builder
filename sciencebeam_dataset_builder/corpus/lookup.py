@@ -19,6 +19,7 @@ from sciencebeam_dataset_builder.corpus.ledger import (
 from sciencebeam_dataset_builder.corpus.parquet_io import PAYLOAD_COLUMNS
 from sciencebeam_dataset_builder.corpus.registry import Corpus, corpus_for_source, repos
 from sciencebeam_dataset_builder.corpus.repo_reader import (
+    HubRepo,
     LocalRepo,
     RepoReader,
     RepoReadError,
@@ -101,6 +102,14 @@ def local_repos(output_dir: Path) -> list[Repo]:
     """Every repo in the registry, read from the tree `build_cli` writes."""
     return [
         Repo(corpus, tier, LocalRepo(output_dir / layout.repo_name(corpus.name, tier)))
+        for corpus, tier in repos()
+    ]
+
+
+def hub_repos(token: str | None = None) -> list[Repo]:
+    """Every repo in the registry, read from the Hub. Nothing is fetched until used."""
+    return [
+        Repo(corpus, tier, HubRepo(corpus.repo_id(tier), token=token))
         for corpus, tier in repos()
     ]
 

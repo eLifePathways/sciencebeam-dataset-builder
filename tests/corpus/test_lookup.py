@@ -14,14 +14,16 @@ from sciencebeam_dataset_builder.corpus.lookup import (
     QueryError,
     Repo,
     Status,
+    hub_repos,
     local_repos,
     lookup,
     parse_query,
 )
 from sciencebeam_dataset_builder.corpus.parquet_io import write_shard
 from sciencebeam_dataset_builder.corpus.registry import CORPORA, Corpus, repos
-from sciencebeam_dataset_builder.corpus.repo_reader import LocalRepo
+from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo, LocalRepo
 from sciencebeam_dataset_builder.corpus.schema import CORPUS_SCHEMA
+from tests.corpus._fake_hub import FakeHub
 
 BIORXIV = CORPORA["biorxiv"]
 ORE = CORPORA["ore"]
@@ -245,3 +247,34 @@ class TestLocalRepos:
         assert _root(found[0]) == tmp_path / layout.repo_name(
             found[0].corpus.name, found[0].tier
         )
+
+
+class TestHubRepos:
+    def test_every_registry_repo_is_named_and_nothing_is_fetched(self, monkeypatch):
+        hub = FakeHub({})
+        hub.install(monkeypatch)
+        found = hub_repos()
+        assert [r.repo_id for r in found] == [c.repo_id(t) for c, t in repos()]
+        assert all(isinstance(r.reader, HubRepo) for r in found)
+        assert hub.calls == []
+
+    def test_a_document_is_found_through_the_hub_at_one_commit(
+        self, tmp_path, monkeypatch
+    ):
+        local = _publish(tmp_path, BIORXIV, Tier.OPEN, {"train": ["a"], "test": ["b"]})
+        hub = FakeHub({local.repo_id: _root(local)}, commits=["c1", "c2"])
+        hub.install(monkeypatch)
+        repo = Repo(BIORXIV, Tier.OPEN, HubRepo(local.repo_id))
+        found, missing = lookup(["b", "z"], [repo])
+        assert found.status is Status.FOUND
+        assert found.locations[0].shard == "pdf-jats/test/test-00000.parquet"
+        assert missing.status is Status.MISSING
+        assert {rev for call, _, rev in hub.calls if call != "dataset_info"} == {"c1"}
+
+    def test_a_repo_the_hub_will_not_serve_is_an_error(self, monkeypatch):
+        hub = FakeHub({}, fail=RuntimeError("401 Unauthorized"))
+        hub.install(monkeypatch)
+        repo = Repo(BIORXIV, Tier.OPEN, HubRepo(BIORXIV.repo_id(Tier.OPEN)))
+        [result] = lookup(["a"], [repo])
+        assert result.status is Status.ERROR
+        assert "401 Unauthorized" in result.detail
