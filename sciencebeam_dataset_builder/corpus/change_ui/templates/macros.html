@@ -1,0 +1,21 @@
+{% macro csrf_field() -%}
+<input type="hidden" name="csrf" value="{{ csrf }}">
+{%- endmacro %}
+
+{# The request so far. A hidden textarea keeps the line breaks an input would drop. #}
+{% macro carry(draft, reasons=true) -%}
+<textarea name="ids" hidden>{{ draft.ids }}</textarea>
+{% for uid in draft.uids %}
+<input type="hidden" name="uid" value="{{ uid }}">
+{% if reasons %}<input type="hidden" name="own:{{ uid }}" value="{{ draft.own[uid] }}">{% endif %}
+{% endfor %}
+{% if reasons %}<input type="hidden" name="shared" value="{{ draft.shared }}">{% endif %}
+{%- endmacro %}
+
+{% macro badge(kind, text=none) -%}
+<span class="badge {{ kind }}">{{ text or kind }}</span>
+{%- endmacro %}
+
+{% macro repo(location) -%}
+{{ location.repo_name }} {{ badge(location.tier) }}
+{%- endmacro %}

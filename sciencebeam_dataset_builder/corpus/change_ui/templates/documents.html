@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% import "macros.html" as m with context %}
+{% block content %}
+<h2>Which documents?</h2>
+<p class="lead">Paste document ids, or load a CSV. An id can be bare, like
+  10.1101_2022.01.01.000000, or carry its source, like biorxiv__10.1101_2022.01.01.000000.</p>
+
+<form method="post" action="/removals/find" enctype="multipart/form-data">
+  {{ m.csrf_field() }}
+  <div class="field">
+    <label for="ids">Document ids</label>
+    <span class="hint" id="ids-hint">Up to {{ max_documents }}, separated by new lines,
+      spaces or commas.</span>
+    <textarea id="ids" name="ids" spellcheck="false" aria-describedby="ids-hint">{{ ids }}</textarea>
+  </div>
+  <div class="field">
+    <label for="csv">Or load a CSV</label>
+    <span class="hint" id="csv-hint">It needs a header row with an id or uid column. A reason
+      column fills in each document's reason.</span>
+    <input type="file" id="csv" name="csv" accept=".csv,text/csv" aria-describedby="csv-hint">
+  </div>
+  <div class="actions">
+    <button class="{{ '' if rows else 'primary' }}">Find documents</button>
+    <span class="spacer"></span>
+    <a class="button back" href="/">Back</a>
+  </div>
+</form>
+
+{% if rows %}
+<h3>What was found</h3>
+<p class="summary">{{ summary }}. Only documents found in exactly one repo can be included.</p>
+<form method="post" action="/removals/reasons">
+  {{ m.csrf_field() }}
+  <textarea name="ids" hidden>{{ ids }}</textarea>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Include</th>
+          <th scope="col">Document</th>
+          <th scope="col">Status</th>
+          <th scope="col">Repo</th>
+          <th scope="col">Split</th>
+          <th scope="col">Shard</th>
+          <th scope="col">Licence</th>
+          <th scope="col">DOI</th>
+          <th scope="col">Published</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        {% if row.includable %}
+        {% set where = row.location %}
+        <tr>
+          <td>
+            <input type="checkbox" name="uid" value="{{ where.uid }}" checked
+                   aria-label="Include {{ where.uid }}">
+            <input type="hidden" name="own:{{ where.uid }}" value="{{ row.own }}">
+          </td>
+          <td class="mono">{{ where.uid }}</td>
+          <td>{{ m.badge(row.status) }}</td>
+          <td>{{ m.repo(where) }}</td>
+          <td>{{ where.split }}</td>
+          <td class="mono">{{ where.parquet_file_name }}</td>
+          <td>{{ where.licence }}</td>
+          <td class="mono">{{ where.doi }}</td>
+          <td>{{ where.pub_date }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td></td>
+          <td class="mono">{{ row.query or "(blank)" }}</td>
+          <td>{{ m.badge(row.status) }}</td>
+          <td class="detail" colspan="6">{{ row.detail }}</td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="actions">
+    <button class="primary">Continue with the ticked documents</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

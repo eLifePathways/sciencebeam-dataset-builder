@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% import "macros.html" as m with context %}
+{% block content %}
+{% set prs = proposals | length %}
+<h2>Check and review</h2>
+<p class="lead">
+  {%- if all_pass %}{{ "The document" if passed == 1 else "All %d documents" % passed }} can be
+  proposed. Review the change to each repo below.
+  {%- else %}{{ passed }} of {{ checks | length }} documents can be proposed. Leave out the others,
+  or go back and fix them, before submitting.{% endif -%}
+</p>
+
+<form method="post" action="/removals/submit">
+  {{ m.csrf_field() }}
+  {{ m.carry(draft) }}
+  {% for p in proposals %}
+  <input type="hidden" name="digest:{{ p.repo_id }}" value="{{ p.digest }}">
+  {% endfor %}
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Document</th>
+          <th scope="col">Result</th>
+          <th scope="col">Repo</th>
+          <th scope="col">Reason</th>
+          <th scope="col"><span class="visually-hidden">Action</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in checks %}
+        <tr>
+          <td class="mono">{{ c.uid }}</td>
+          <td>
+            {% if c.ok %}{{ m.badge("ok", "Can be proposed") }}
+            {% else %}
+            {{ m.badge("error", "Cannot be proposed") }}
+            <ul class="errors">{% for e in c.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+            {% endif %}
+          </td>
+          <td>{% if c.location %}{{ m.repo(c.location) }}{% endif %}</td>
+          <td>{{ c.reason }}</td>
+          <td>
+            {% if not c.ok %}
+            <button class="small" name="leave_out" value="{{ c.uid }}"
+                    formaction="/removals/check">Leave out</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if prs %}<h3>What each pull request adds</h3>{% endif %}
+  {% for p in proposals %}
+  <section class="proposal" aria-label="Change to {{ p.repo_id }}">
+    <header>
+      <strong>{{ p.repo_id }}</strong> {{ m.badge(p.tier) }}
+      <p>{{ p.count }} removal{{ '' if p.count == 1 else 's' }} added to {{ p.path }}
+        {%- if p.before is none %}, which this creates{% endif %}.</p>
+    </header>
+    <pre class="added">{% for line in p.added_lines %}+ {{ line }}
+{% endfor %}</pre>
+    {% if p.before is not none %}
+    <details>
+      <summary>The file as it is now</summary>
+      <pre>{{ p.before }}</pre>
+    </details>
+    {% endif %}
+  </section>
+  {% endfor %}
+
+  {% if not can_submit %}
+  <p class="notice">This is a preview against a local build, so submitting is switched off.</p>
+  {% endif %}
+
+  <label class="confirm">
+    <input type="checkbox" name="confirm" value="yes" {% if not (all_pass and prs) %}disabled{% endif %}>
+    <span>I have reviewed these removals. Open {{ prs }} pull request{{ '' if prs == 1 else 's' }}
+      for review. The documents stay in the dataset until a release applies the change.</span>
+  </label>
+
+  <div class="actions">
+    <button class="primary" {% if not (all_pass and prs and can_submit) %}disabled{% endif %}>
+      Open {{ prs }} pull request{{ '' if prs == 1 else 's' }}</button>
+    <span class="spacer"></span>
+    <button class="back" formaction="/removals/reasons">Back</button>
+  </div>
+</form>
+{% endblock %}

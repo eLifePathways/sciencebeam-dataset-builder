@@ -1,12 +1,26 @@
-"""Tests for corpus.change_ui — the change request page and its API."""
+"""Tests for corpus.change_ui — the change request pages."""
 
+import re
 from collections.abc import Callable, Sequence
+from typing import Any, cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.datastructures import FormData
 
 from sciencebeam_dataset_builder.corpus import layout
-from sciencebeam_dataset_builder.corpus.change_ui.app import MAX_DOCUMENTS, create_app
+from sciencebeam_dataset_builder.corpus.change_ui.app import create_app
+from sciencebeam_dataset_builder.corpus.change_ui.forms import (
+    MAX_CSV_BYTES,
+    MAX_DOCUMENTS,
+    MAX_REASON,
+    Draft,
+    FormError,
+    check_count,
+    parse_ids,
+    read_csv,
+)
 from sciencebeam_dataset_builder.corpus.layout import Tier
 from sciencebeam_dataset_builder.corpus.lookup import Repo
 from sciencebeam_dataset_builder.corpus.proposal import ProposalError
@@ -18,6 +32,7 @@ from tests.corpus._repos import publish, root_of, write_file
 BIORXIV = CORPORA["biorxiv"]
 ORE = CORPORA["ore"]
 REASON = "editorial, not a research article"
+DIGEST = re.compile(r'name="digest:([^"]+)" value="([0-9a-f]{64})"')
 
 
 def _client(
@@ -27,6 +42,23 @@ def _client(
     base_url: str = "http://127.0.0.1",
 ) -> TestClient:
     return TestClient(create_app(repos, identity, can_submit), base_url=base_url)
+
+
+def _post(client: TestClient, path: str, data: dict[str, Any], **kwargs: Any) -> Any:
+    token = cast(FastAPI, client.app).state.csrf
+    return client.post(path, data={**data, "csrf": token}, **kwargs)
+
+
+def _request(
+    *uids: str, shared: str = REASON, own: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """The hidden fields a page carries for these documents."""
+    return {
+        "ids": " ".join(uids),
+        "uid": list(uids),
+        "shared": shared,
+        **{f"own:{uid}": (own or {}).get(uid, "") for uid in uids},
+    }
 
 
 @pytest.fixture
@@ -39,77 +71,181 @@ def local(biorxiv):
     return _client(lambda: [biorxiv], can_submit=False)
 
 
-class TestPage:
-    def test_the_page_and_its_script_are_served(self, local):
-        assert "Corpus change requests" in local.get("/").text
-        assert local.get("/static/app.js").status_code == 200
+class TestForms:
+    def test_ids_are_split_on_lines_spaces_commas_and_semicolons(self):
+        assert parse_ids(" a\nb, c;d\t\te \n\n") == ["a", "b", "c", "d", "e"]
+
+    def test_a_csv_gives_its_ids_and_any_reasons(self):
+        data = (
+            '﻿uid,reason\r\nbiorxiv__a,"editorial, not research"\r\n'
+            'b,"said ""no"""\r\nc,\r\n\r\n'
+        ).encode()
+        assert read_csv(data) == (
+            ["biorxiv__a", "b", "c"],
+            {"biorxiv__a": "editorial, not research", "b": 'said "no"'},
+        )
+
+    def test_an_id_column_is_enough(self):
+        assert read_csv(b"id\na\n") == (["a"], {})
+
+    @pytest.mark.parametrize(
+        ("data", "message"),
+        [
+            (b"", "empty"),
+            (b"name,reason\na,x\n", "id or uid column"),
+            (b"id\n\xff\n", "cannot be read"),
+            (b"id\n" + b"a\n" * MAX_CSV_BYTES, "larger than 1 MB"),
+        ],
+    )
+    def test_a_csv_that_cannot_be_used_says_why(self, data, message):
+        with pytest.raises(FormError, match=message):
+            read_csv(data)
+
+    @pytest.mark.parametrize("count", [0, MAX_DOCUMENTS + 1])
+    def test_too_few_or_too_many_ids_are_refused(self, count):
+        with pytest.raises(FormError):
+            check_count(["a"] * count)
+
+    def test_a_documents_own_reason_wins_over_the_shared_one(self):
+        form = FormData(
+            [
+                ("uid", "a"),
+                ("uid", "b"),
+                ("uid", "a"),
+                ("shared", " all "),
+                ("own:b", "b's"),
+            ]
+        )
+        draft = Draft.from_form(form)
+        assert draft.uids == ("a", "b")
+        assert draft.requests() == [("a", "all"), ("b", "b's")]
+        assert draft.without("a").uids == ("b",)
+
+    def test_a_reason_that_is_too_long_is_refused(self):
+        form = FormData([("uid", "a"), ("shared", "x" * (MAX_REASON + 1))])
+        with pytest.raises(FormError, match="at most"):
+            Draft.from_form(form)
+
+
+class TestPages:
+    def test_the_first_page_offers_the_four_change_types(self, local):
+        page = local.get("/").text
+        for title in ("Remove documents", "Add documents", "Correct content"):
+            assert title in page
+        assert page.count('href="/removals"') == 1
 
     def test_a_request_for_another_host_name_is_refused(self, biorxiv):
         """A page that rebinds its own name to 127.0.0.1 still sends its own Host."""
         foreign = _client(lambda: [biorxiv], base_url="http://attacker.example")
-        assert foreign.get("/api/whoami").status_code == 400
+        assert foreign.get("/").status_code == 400
 
-    def test_a_body_that_is_not_json_is_refused(self, local):
-        """A cross-site form can post text, but not JSON without asking first."""
-        response = local.post(
-            "/api/lookup", content="queries=a", headers={"content-type": "text/plain"}
-        )
-        assert response.status_code == 422
+    def test_a_form_without_this_servers_token_is_refused(self, local):
+        """Another site can post a form here, but cannot read the token to put in it."""
+        response = local.post("/removals/find", data={"ids": "a", "csrf": "guess"})
+        assert response.status_code == 403
+        assert "expired" in response.text
 
+    def test_the_user_is_named_and_a_preview_says_so(self, local):
+        assert "Previewing a local build as hazal" in local.get("/").text
 
-class TestWhoami:
-    def test_it_names_the_user_and_whether_submitting_is_on(self, local):
-        assert local.get("/api/whoami").json() == {"user": "hazal", "can_submit": False}
-
-    def test_no_user_is_unauthorised(self, biorxiv):
+    def test_no_user_is_shown_rather_than_hidden(self, biorxiv):
         def nobody() -> str:
             raise ProposalError("the Hub token names no user")
 
-        client = _client(lambda: [biorxiv], identity=nobody)
-        response = client.get("/api/whoami")
-        assert response.status_code == 401
-        assert response.json()["detail"] == "the Hub token names no user"
+        page = _client(lambda: [biorxiv], identity=nobody).get("/").text
+        assert "Not signed in" in page
+        assert "the Hub token names no user" in page
 
 
-class TestLookup:
-    def test_each_query_comes_back_with_where_it_is(self, local):
-        found, missing = local.post("/api/lookup", json={"queries": ["a", "z"]}).json()[
-            "results"
-        ]
-        assert found["status"] == "found"
-        [where] = found["locations"]
-        assert where["uid"] == "biorxiv__a"
-        assert (where["split"], where["parquet_file_name"]) == (
-            "train",
-            "train-00000.parquet",
+class TestFind:
+    def test_found_documents_can_be_ticked_and_the_rest_say_why(self, local):
+        page = _post(local, "/removals/find", {"ids": "a z"}).text
+        assert 'name="uid" value="biorxiv__a" checked' in page
+        assert "train-00000.parquet" in page
+        assert "not in the latest release" in page
+        assert "1 found · 1 missing" in page
+
+    def test_a_csv_fills_in_each_documents_reason(self, local):
+        csv = b"uid,reason\nbiorxiv__a,its own reason\n"
+        page = _post(
+            local,
+            "/removals/find",
+            {"ids": ""},
+            files={"csv": ("r.csv", csv, "text/csv")},
+        ).text
+        assert 'name="own:biorxiv__a" value="its own reason"' in page
+
+    def test_one_document_named_twice_can_be_ticked_once(self, local):
+        page = _post(local, "/removals/find", {"ids": "a biorxiv__a"}).text
+        assert page.count('name="uid" value="biorxiv__a"') == 1
+        assert "listed above already" in page
+
+    def test_no_ids_is_refused_with_the_form_kept(self, local):
+        response = _post(local, "/removals/find", {"ids": " "})
+        assert response.status_code == 400
+        assert "Enter at least one document id" in response.text
+
+    def test_a_bad_csv_says_why(self, local):
+        response = _post(
+            local, "/removals/find", {"ids": "a"}, files={"csv": ("r.csv", b"x\n1\n")}
         )
-        assert where["metadata"]["licence"] == "CC BY 4.0"
-        assert missing["status"] == "missing"
-
-    @pytest.mark.parametrize("count", [0, MAX_DOCUMENTS + 1])
-    def test_too_few_or_too_many_queries_are_refused(self, local, count):
-        response = local.post("/api/lookup", json={"queries": ["a"] * count})
-        assert response.status_code == 422
+        assert response.status_code == 400
+        assert "id or uid column" in response.text
 
 
-class TestCheck:
-    def test_the_review_shows_each_document_and_each_file(self, local):
-        body = {"requests": [{"query": "a", "reason": REASON}]}
-        data = local.post("/api/removals/check", json=body).json()
-        [check] = data["checks"]
-        assert check["ok"]
-        assert check["removal"]["local_change_id"] == 1
-        [proposal] = data["proposals"]
-        assert proposal["path"] == layout.REMOVALS_PATH
-        assert proposal["before"] is None
-        assert "change_reason: editorial, not a research article" in proposal["added"]
-        assert len(proposal["digest"]) == 64
+class TestReasons:
+    def test_each_document_gets_a_field_for_its_own_reason(self, local):
+        data = _request("biorxiv__a", own={"biorxiv__a": "mine"})
+        page = _post(local, "/removals/reasons", data).text
+        assert 'name="own:biorxiv__a" value="mine"' in page
+        assert 'aria-label="Reason for biorxiv__a"' in page
 
-    def test_a_failing_document_says_why(self, local):
-        body = {"requests": [{"query": "a", "reason": " "}]}
-        [check] = local.post("/api/removals/check", json=body).json()["checks"]
-        assert not check["ok"]
-        assert check["errors"] == ["a reason is required"]
+    def test_nothing_ticked_goes_back_to_the_documents(self, local):
+        response = _post(local, "/removals/reasons", {"ids": "a"})
+        assert response.status_code == 400
+        assert "Tick at least one document" in response.text
+
+
+class TestReview:
+    def test_a_passing_document_shows_what_the_pull_request_adds(self, local):
+        page = _post(local, "/removals/check", _request("biorxiv__a")).text
+        assert "The document can be\n  proposed" in page
+        assert "+   - id: a" in page
+        assert "change_reason: editorial, not a research article" in page
+        assert DIGEST.search(page)
+
+    def test_a_failing_document_says_why_and_can_be_left_out(self, local):
+        page = _post(local, "/removals/check", _request("biorxiv__a", shared=" ")).text
+        assert "a reason is required" in page
+        assert 'name="leave_out" value="biorxiv__a"' in page
+        assert 'name="confirm" value="yes" disabled' in page
+
+    def test_leaving_a_document_out_checks_the_rest(self, local):
+        data = {**_request("biorxiv__a", "biorxiv__zz"), "leave_out": "biorxiv__zz"}
+        page = _post(local, "/removals/check", data).text
+        assert "The document can be\n  proposed" in page
+        assert 'name="uid" value="biorxiv__zz"' not in page
+
+    def test_leaving_out_every_document_goes_back_to_the_documents(self, local):
+        data = {**_request("biorxiv__zz"), "leave_out": "biorxiv__zz"}
+        assert (
+            "Every document has been left out"
+            in _post(local, "/removals/check", data).text
+        )
+
+    def test_what_was_typed_is_shown_as_text_never_as_markup(self, local):
+        page = _post(
+            local,
+            "/removals/check",
+            _request("biorxiv__a", shared="<script>x</script>"),
+        ).text
+        assert "<script>x</script>" not in page
+        assert "&lt;script&gt;x&lt;/script&gt;" in page
+
+    def test_an_existing_removals_file_is_shown_as_it_is(self, biorxiv, local):
+        write_file(biorxiv, layout.REMOVALS_PATH, "removals:\n")
+        page = _post(local, "/removals/check", _request("biorxiv__a")).text
+        assert "The file as it is now" in page
 
 
 class TestSubmit:
@@ -123,83 +259,70 @@ class TestSubmit:
     def client(self, biorxiv, hub):
         return _client(lambda: [Repo(BIORXIV, Tier.OPEN, HubRepo(biorxiv.repo_id))])
 
-    def _reviewed(self, client, requests):
-        data = client.post("/api/removals/check", json={"requests": requests}).json()
-        return {p["repo_id"]: p["digest"] for p in data["proposals"]}
+    def _reviewed(self, client: TestClient, data: dict[str, Any]) -> dict[str, Any]:
+        page = _post(client, "/removals/check", data).text
+        digests = {f"digest:{repo}": digest for repo, digest in DIGEST.findall(page)}
+        return {**data, **digests, "confirm": "yes"}
 
-    def test_a_reviewed_request_opens_its_pull_request(self, hub, client, biorxiv):
-        requests = [{"query": "a", "reason": REASON}]
-        reviewed = self._reviewed(client, requests)
-        response = client.post(
-            "/api/removals/submit", json={"requests": requests, "reviewed": reviewed}
+    def test_a_reviewed_and_confirmed_request_opens_its_pull_request(self, hub, client):
+        page = _post(
+            client, "/removals/submit", self._reviewed(client, _request("biorxiv__a"))
         )
-        [result] = response.json()["results"]
-        assert result["ok"]
-        assert result["repo_id"] == biorxiv.repo_id
-        assert result["pr_url"].endswith("/discussions/100")
+        assert "Submitted for review" in page.text
+        assert 'href="https://huggingface.co/datasets/' in page.text
+        assert "Pull request #100" in page.text
         assert len(hub.opened) == 1
 
+    def test_nothing_is_opened_without_the_confirmation(self, hub, client):
+        data = self._reviewed(client, _request("biorxiv__a"))
+        del data["confirm"]
+        response = _post(client, "/removals/submit", data)
+        assert response.status_code == 400
+        assert "Tick the box" in response.text
+        assert hub.opened == []
+
     def test_a_preview_cannot_submit(self, local):
-        body = {"requests": [{"query": "a", "reason": REASON}], "reviewed": {}}
-        assert local.post("/api/removals/submit", json=body).status_code == 403
+        data = {**_request("biorxiv__a"), "confirm": "yes"}
+        response = _post(local, "/removals/submit", data)
+        assert response.status_code == 403
+        assert "nothing can be submitted" in response.text
 
     def test_files_that_changed_since_the_review_are_not_submitted(self, hub, client):
-        requests = [{"query": "a", "reason": REASON}]
-        reviewed = {k: "0" * 64 for k in self._reviewed(client, requests)}
-        response = client.post(
-            "/api/removals/submit", json={"requests": requests, "reviewed": reviewed}
-        )
+        data = self._reviewed(client, _request("biorxiv__a"))
+        stale = {
+            k: ("0" * 64 if k.startswith("digest:") else v) for k, v in data.items()
+        }
+        response = _post(client, "/removals/submit", stale)
         assert response.status_code == 409
+        assert "changed after you reviewed them" in response.text
         assert hub.opened == []
 
     def test_a_document_that_fails_now_stops_the_submission(self, hub, client):
-        requests = [{"query": "a", "reason": REASON}]
-        reviewed = self._reviewed(client, requests)
+        data = self._reviewed(client, _request("biorxiv__a"))
         hub.pull_requests = [FakePullRequest(7, "Remove a", removals_diff("a"))]
-        response = client.post(
-            "/api/removals/submit", json={"requests": requests, "reviewed": reviewed}
-        )
+        response = _post(client, "/removals/submit", data)
         assert response.status_code == 409
-        assert "#7" in response.json()["checks"][0]["errors"][0]
+        assert "open pull request #7" in response.text
         assert hub.opened == []
 
     def test_one_repo_failing_leaves_the_others_opened(
         self, tmp_path, monkeypatch, biorxiv
     ):
         ore = publish(tmp_path, ORE, Tier.OPEN, {"train": ["o"]})
-        hub = FakeHub(
+        FakeHub(
             {biorxiv.repo_id: root_of(biorxiv), ore.repo_id: root_of(ore)},
             fail=RuntimeError("503"),
             fail_on="create_commit",
             fail_repo=biorxiv.repo_id,
-        )
-        hub.install(monkeypatch)
+        ).install(monkeypatch)
         client = _client(
             lambda: [
                 Repo(BIORXIV, Tier.OPEN, HubRepo(biorxiv.repo_id)),
                 Repo(ORE, Tier.OPEN, HubRepo(ore.repo_id)),
             ]
         )
-        requests = [
-            {"query": "a", "reason": REASON},
-            {"query": "o", "reason": REASON},
-        ]
-        reviewed = self._reviewed(client, requests)
-        results = client.post(
-            "/api/removals/submit", json={"requests": requests, "reviewed": reviewed}
-        ).json()["results"]
-        assert [(r["repo_id"], r["ok"]) for r in results] == [
-            (biorxiv.repo_id, False),
-            (ore.repo_id, True),
-        ]
-        assert "503" in results[0]["error"]
-
-
-def test_an_existing_removals_file_is_shown_as_it_is(biorxiv):
-    existing = "removals:\n"
-    write_file(biorxiv, layout.REMOVALS_PATH, existing)
-    client = _client(lambda: [biorxiv], can_submit=False)
-    body = {"requests": [{"query": "a", "reason": REASON}]}
-    [proposal] = client.post("/api/removals/check", json=body).json()["proposals"]
-    assert proposal["before"] == existing
-    assert proposal["added"].startswith("  - id: a\n")
+        data = self._reviewed(client, _request("biorxiv__a", "ore__o"))
+        page = _post(client, "/removals/submit", data).text
+        assert "Only partly submitted" in page
+        assert "Not opened" in page and "503" in page
+        assert "Pull request #100" in page
