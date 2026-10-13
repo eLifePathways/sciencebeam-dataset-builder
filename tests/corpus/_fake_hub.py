@@ -7,11 +7,25 @@ from typing import Any
 
 
 @dataclass
+class FakePullRequest:
+    num: int
+    title: str
+    diff: str | None
+
+
+@dataclass
 class FakeHub:
     roots: dict[str, Path]
     # What `main` resolves to on each successive ask; the last answer repeats.
     commits: list[str | None] = field(default_factory=lambda: ["c1"])
     fail: Exception | None = None
+    # The one call that fails; every call when blank.
+    fail_on: str = ""
+    pull_requests: list[FakePullRequest] = field(default_factory=list)
+    opened: list[dict[str, Any]] = field(default_factory=list)
+    # A pull request serves back something other than what was sent.
+    tamper: bool = False
+    user: str | None = "hazal"
     calls: list[tuple[str, str, str]] = field(default_factory=list)
 
     def install(self, monkeypatch: Any) -> None:
@@ -21,9 +35,23 @@ class FakeHub:
         )
 
     def record(self, call: str, repo_id: str, revision: str) -> None:
-        if self.fail is not None:
+        if self.fail is not None and self.fail_on in ("", call):
             raise self.fail
         self.calls.append((call, repo_id, revision))
+
+
+def removals_diff(*ids: str) -> str:
+    """What the Hub shows for a pull request adding these ids to `removals.yml`."""
+    path = "changes/removals/removals.yml"
+    added = "".join(f"+  - id: '{i}'\n+    local_change_id: 1\n" for i in ids)
+    return (
+        f"diff --git a/{path} b/{path}\n--- /dev/null\n+++ b/{path}\n"
+        f"@@ -0,0 +1,{1 + 2 * len(ids)} @@\n+removals:\n{added}"
+    )
+
+
+def _url(repo_id: str, num: int) -> str:
+    return f"https://huggingface.co/datasets/{repo_id}/discussions/{num}"
 
 
 @dataclass
@@ -49,7 +77,63 @@ class _Api:
         self, repo_id: str, filename: str, repo_type: str, revision: str
     ) -> str:
         self.hub.record("hf_hub_download", repo_id, revision)
-        return str(self.hub.roots[repo_id] / filename)
+        if not revision.startswith("refs/pr/"):
+            return str(self.hub.roots[repo_id] / filename)
+        num = int(revision.rsplit("/", 1)[1])
+        sent = next(o for o in self.hub.opened if o["num"] == num)["files"][filename]
+        local = self.hub.roots[repo_id].parent / f"pr-{num}" / filename
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_bytes(sent[:-1] if self.hub.tamper else sent)
+        return str(local)
+
+    def get_repo_discussions(
+        self,
+        repo_id: str,
+        repo_type: str,
+        discussion_type: str,
+        discussion_status: str,
+    ) -> Any:
+        self.hub.record("get_repo_discussions", repo_id, discussion_status)
+        return iter(
+            SimpleNamespace(num=pr.num, title=pr.title, url=_url(repo_id, pr.num))
+            for pr in self.hub.pull_requests
+        )
+
+    def get_discussion_details(
+        self, repo_id: str, discussion_num: int, repo_type: str
+    ) -> SimpleNamespace:
+        self.hub.record("get_discussion_details", repo_id, str(discussion_num))
+        pr = next(p for p in self.hub.pull_requests if p.num == discussion_num)
+        return SimpleNamespace(diff=pr.diff)
+
+    def create_commit(
+        self,
+        repo_id: str,
+        operations: list[Any],
+        *,
+        commit_message: str,
+        commit_description: str,
+        repo_type: str,
+        create_pr: bool,
+        parent_commit: str,
+    ) -> SimpleNamespace:
+        self.hub.record("create_commit", repo_id, parent_commit)
+        num = 100 + len(self.hub.opened)
+        self.hub.opened.append(
+            {
+                "num": num,
+                "files": {op.path_in_repo: op.path_or_fileobj for op in operations},
+                "message": commit_message,
+                "description": commit_description,
+                "create_pr": create_pr,
+                "parent_commit": parent_commit,
+            }
+        )
+        return SimpleNamespace(pr_num=num, pr_url=_url(repo_id, num))
+
+    def whoami(self) -> dict[str, Any]:
+        self.hub.record("whoami", "", "")
+        return {"name": self.hub.user}
 
 
 @dataclass

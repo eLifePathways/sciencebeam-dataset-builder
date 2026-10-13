@@ -8,7 +8,9 @@ from sciencebeam_dataset_builder.corpus.layout import Tier
 from sciencebeam_dataset_builder.corpus.ledger import Change, ChangeType, write_ledger
 from sciencebeam_dataset_builder.corpus.lookup import Repo
 from sciencebeam_dataset_builder.corpus.registry import CORPORA
+from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo
 from sciencebeam_dataset_builder.corpus.validate import check_removals
+from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_diff
 from tests.corpus._repos import publish, root_of, write_file
 
 BIORXIV = CORPORA["biorxiv"]
@@ -173,3 +175,52 @@ class TestCheckRemovals:
     def test_a_blank_submitter_is_refused_outright(self, biorxiv):
         with pytest.raises(ValueError, match="changed_by"):
             check_removals([("a", REASON)], [biorxiv], " ")
+
+
+class TestOpenPullRequests:
+    """Read through the Hub, where a pull request can already be open."""
+
+    @pytest.fixture
+    def hub(self, biorxiv, monkeypatch):
+        hub = FakeHub({biorxiv.repo_id: root_of(biorxiv)})
+        hub.install(monkeypatch)
+        return hub
+
+    @pytest.fixture
+    def repo(self, biorxiv, hub):
+        return Repo(BIORXIV, Tier.OPEN, HubRepo(biorxiv.repo_id))
+
+    def test_a_document_already_proposed_says_where(self, hub, repo):
+        hub.pull_requests = [FakePullRequest(7, "Remove a", removals_diff("a"))]
+        checks, proposals = check_removals([("a", REASON)], [repo], "hazal")
+        assert (
+            "already proposed for removal in open pull request #7"
+            in (checks[0].errors[0])
+        )
+        assert proposals == []
+
+    def test_another_open_removal_pull_request_blocks_the_repo(self, hub, repo):
+        """Both would edit the one removals.yml, so the second would conflict."""
+        hub.pull_requests = [FakePullRequest(7, "Remove z", removals_diff("z"))]
+        checks, _ = check_removals([("a", REASON)], [repo], "hazal")
+        assert "has to be merged or closed first" in checks[0].errors[0]
+
+    def test_an_open_correction_of_the_document_blocks_its_removal(self, hub, repo):
+        path = layout.correction_paths("a").metadata
+        diff = f"diff --git a/{path} b/{path}\n--- /dev/null\n+++ b/{path}\n"
+        hub.pull_requests = [FakePullRequest(8, "Correct a", diff)]
+        checks, _ = check_removals([("a", REASON), ("b", REASON)], [repo], "hazal")
+        assert "open pull request #8" in checks[0].errors[0]
+        assert "changes its correction" in checks[0].errors[0]
+        assert checks[1].ok
+
+    def test_an_unrelated_pull_request_changes_nothing(self, hub, repo):
+        diff = "diff --git a/README.md b/README.md\n@@ -1 +1 @@\n+card\n"
+        hub.pull_requests = [FakePullRequest(9, "Card", diff)]
+        checks, _ = check_removals([("a", REASON)], [repo], "hazal")
+        assert checks[0].ok
+
+    def test_a_pull_request_that_cannot_be_read_fails_closed(self, hub, repo):
+        hub.pull_requests = [FakePullRequest(9, "?", None)]
+        checks, _ = check_removals([("a", REASON)], [repo], "hazal")
+        assert "no diff" in checks[0].errors[0]

@@ -1,7 +1,10 @@
 """Checking requested changes document by document, before anything is proposed."""
 
-from collections.abc import Sequence
+import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+
+import yaml
 
 from sciencebeam_dataset_builder.corpus import layout
 from sciencebeam_dataset_builder.corpus.change_files import (
@@ -15,8 +18,10 @@ from sciencebeam_dataset_builder.corpus.change_files import (
 )
 from sciencebeam_dataset_builder.corpus.ledger import Change, LedgerError, read_ledger
 from sciencebeam_dataset_builder.corpus.lookup import Location, Repo, Status, lookup
+from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo, PullRequest
 
 _READ_ERRORS = (OSError, ChangeFileError, LedgerError)
+_ID_LINE = re.compile(r"^\s*(?:-\s+)?id:\s*(?P<value>.+?)\s*$")
 
 
 @dataclass(frozen=True)
@@ -46,12 +51,13 @@ class RemovalProposal:
 
 @dataclass
 class _Changes:
-    """A repo's change files and ledger, as they stand on `main`."""
+    """A repo's change files and ledger on `main`, and its open pull requests."""
 
     files: set[str] = field(default_factory=set)
     removals_text: str | None = None
     removals: list[Removal] = field(default_factory=list)
     ledger: list[Change] = field(default_factory=list)
+    pull_requests: list[PullRequest] = field(default_factory=list)
     error: str = ""
 
     @property
@@ -153,9 +159,12 @@ def _load(repo: Repo) -> _Changes:
             if layout.LEDGER_PATH in files
             else []
         )
+        pull_requests = (
+            repo.reader.open_pull_requests() if isinstance(repo.reader, HubRepo) else []
+        )
     except _READ_ERRORS as exc:
         return _Changes(error=f"{repo.repo_id}: {exc}")
-    return _Changes(files, text, removals, ledger)
+    return _Changes(files, text, removals, ledger, pull_requests)
 
 
 def _pending(
@@ -170,6 +179,7 @@ def _pending(
         for r in changes.removals
         if r.id == location.id and (r.id, r.local_change_id) not in recorded
     ]
+    errors += _open_conflicts(location, changes.pull_requests)
     path = layout.correction_paths(location.id).metadata
     if path not in changes.files:
         return errors, []
@@ -183,6 +193,40 @@ def _pending(
         if (location.id, c.local_change_id) not in recorded
     ]
     return errors, corrections
+
+
+def _open_conflicts(
+    location: Location, pull_requests: Sequence[PullRequest]
+) -> list[str]:
+    """Any open PR on `removals.yml` blocks another: both would edit the one file."""
+    directory = layout.correction_paths(location.id).directory + "/"
+    errors = []
+    for pr in pull_requests:
+        where = f"open pull request #{pr.num} ({pr.url})"
+        if any(path.startswith(directory) for path in pr.files):
+            errors.append(f"{where} changes its correction")
+        if layout.REMOVALS_PATH in pr.files:
+            if location.id in _ids_added(pr.added[layout.REMOVALS_PATH]):
+                errors.append(f"already proposed for removal in {where}")
+            else:
+                errors.append(
+                    f"{where} already proposes removals here; it has to be merged "
+                    f"or closed first"
+                )
+    return errors
+
+
+def _ids_added(lines: Iterable[str]) -> set[str]:
+    ids = set()
+    for line in lines:
+        if match := _ID_LINE.match(line):
+            raw = match["value"]
+            try:
+                value = yaml.safe_load(raw)
+            except yaml.YAMLError:
+                value = raw
+            ids.add(value if isinstance(value, str) else raw)
+    return ids
 
 
 def _read_text(repo: Repo, path: str) -> str:

@@ -1,6 +1,7 @@
 """Reading a corpus repo's files, wherever the repo is."""
 
-from collections.abc import Iterator, Sequence
+import re
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
@@ -12,6 +13,8 @@ import pyarrow.parquet as pq
 
 if TYPE_CHECKING:
     from huggingface_hub import HfApi, HfFileSystem
+
+_DIFF_HEADER = re.compile(r"^diff --git a/.+ b/(?P<path>.+)$")
 
 
 class RepoReadError(OSError):
@@ -27,6 +30,37 @@ class RepoReader(Protocol):
 
     def read_columns(self, path: str, columns: Sequence[str]) -> pa.Table:
         """Some columns of one parquet file, without reading the others."""
+
+
+@dataclass(frozen=True)
+class PullRequest:
+    """An open pull request, and the lines it adds to each file it touches."""
+
+    num: int
+    title: str
+    url: str
+    added: Mapping[str, tuple[str, ...]]
+
+    @property
+    def files(self) -> tuple[str, ...]:
+        return tuple(self.added)
+
+
+def parse_diff(diff: str) -> dict[str, tuple[str, ...]]:
+    """File -> the lines a git diff adds to it, for every file the diff touches."""
+    added: dict[str, list[str]] = {}
+    current = ""
+    in_hunk = False
+    for line in diff.splitlines():
+        if match := _DIFF_HEADER.match(line):
+            current = match["path"]
+            added.setdefault(current, [])
+            in_hunk = False
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif in_hunk and current and line.startswith("+"):
+            added[current].append(line[1:])
+    return {path: tuple(lines) for path, lines in added.items()}
 
 
 @dataclass(frozen=True)
@@ -93,6 +127,25 @@ class HubRepo:
         remote = f"datasets/{self.repo_id}@{self.commit}/{path}"
         with self._errors(), self._fs().open(remote, "rb") as f:
             return pq.read_table(f, columns=list(columns))
+
+    def open_pull_requests(self) -> list[PullRequest]:
+        """As they stand now, not at `commit`: a PR opened since still conflicts."""
+        found = []
+        with self._errors():
+            api = self._api()
+            for pr in api.get_repo_discussions(
+                self.repo_id,
+                repo_type="dataset",
+                discussion_type="pull_request",
+                discussion_status="open",
+            ):
+                diff = api.get_discussion_details(
+                    self.repo_id, pr.num, repo_type="dataset"
+                ).diff
+                if diff is None:
+                    raise RepoReadError(f"pull request #{pr.num} has no diff to check")
+                found.append(PullRequest(pr.num, pr.title, pr.url, parse_diff(diff)))
+        return found
 
     def _api(self) -> "HfApi":
         from huggingface_hub import HfApi
