@@ -19,8 +19,9 @@ class FakeHub:
     # What `main` resolves to on each successive ask; the last answer repeats.
     commits: list[str | None] = field(default_factory=lambda: ["c1"])
     fail: Exception | None = None
-    # The one call that fails; every call when blank.
+    # The one call, and the one repo, that fail; every one when blank.
     fail_on: str = ""
+    fail_repo: str = ""
     pull_requests: list[FakePullRequest] = field(default_factory=list)
     opened: list[dict[str, Any]] = field(default_factory=list)
     # A pull request serves back something other than what was sent.
@@ -35,7 +36,11 @@ class FakeHub:
         )
 
     def record(self, call: str, repo_id: str, revision: str) -> None:
-        if self.fail is not None and self.fail_on in ("", call):
+        if (
+            self.fail is not None
+            and self.fail_on in ("", call)
+            and self.fail_repo in ("", repo_id)
+        ):
             raise self.fail
         self.calls.append((call, repo_id, revision))
 
