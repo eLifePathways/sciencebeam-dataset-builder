@@ -1,9 +1,11 @@
 """Checking requested changes document by document, before anything is proposed."""
 
 import re
+import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
+import pyarrow as pa
 import yaml
 
 from sciencebeam_dataset_builder.corpus import layout
@@ -11,16 +13,32 @@ from sciencebeam_dataset_builder.corpus.change_files import (
     ChangeFileError,
     Correction,
     Removal,
+    append_correction,
     append_removals,
     next_local_change_id,
     read_correction,
     read_removals,
 )
-from sciencebeam_dataset_builder.corpus.ledger import Change, LedgerError, read_ledger
+from sciencebeam_dataset_builder.corpus.ledger import (
+    Change,
+    ChangeType,
+    LedgerError,
+    read_ledger,
+)
 from sciencebeam_dataset_builder.corpus.lookup import Location, Repo, Status, lookup
-from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo, PullRequest
+from sciencebeam_dataset_builder.corpus.repo_reader import (
+    HubRepo,
+    PullRequest,
+    RepoReadError,
+)
+from sciencebeam_dataset_builder.dataset.license.extract_license import (
+    extract_licence,
+    parse_xml,
+)
 
-_READ_ERRORS = (OSError, ChangeFileError, LedgerError)
+MAX_XML_BYTES = 20_000_000
+
+_READ_ERRORS = (OSError, pa.ArrowException, ChangeFileError, LedgerError)
 _ID_LINE = re.compile(r"^\s*(?:-\s+)?id:\s*(?P<value>.+?)\s*$")
 
 
@@ -47,6 +65,46 @@ class RemovalProposal:
     removals: tuple[Removal, ...]
     before: str | None
     after: str
+
+
+@dataclass(frozen=True)
+class CorrectionProposal:
+    """What one correction writes into its document's `changes/corrections/<id>/`.
+
+    `seed` is set only for a document's first content correction: `corrected.xml` is
+    committed as it was harvested before the fix is, so the pull request's diff is
+    exactly the fix.
+    """
+
+    repo: Repo
+    id: str
+    metadata_before: str | None
+    metadata_after: str
+    corrected_before: str | None
+    corrected_after: str
+    seed: str | None
+
+
+@dataclass(frozen=True)
+class ContentCorrectionCheck:
+    """One requested content correction, whether it may be proposed, and what it does.
+
+    `current` is what the document reads as now: its last proposed correction, or the
+    XML the dataset ships.
+    """
+
+    query: str
+    reason: str
+    location: Location | None
+    correction: Correction | None
+    proposal: CorrectionProposal | None
+    current: str
+    errors: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
 
 
 @dataclass
@@ -107,7 +165,7 @@ def check_removals(
             draft.errors.append("a reason is required")
         if key[0] not in changes:
             changes[key[0]] = _load(location.repo)
-        conflicts, corrections = _pending(location, changes[key[0]])
+        conflicts, corrections = _removal_conflicts(location, changes[key[0]])
         draft.errors.extend(conflicts)
         if not draft.errors:
             repo_changes = changes[key[0]]
@@ -145,6 +203,97 @@ def check_removals(
     return checks, proposals
 
 
+def check_content_correction(
+    query: str, reason: str, xml: bytes, repos: Sequence[Repo], changed_by: str
+) -> ContentCorrectionCheck:
+    """Check one corrected XML against the document's current version.
+
+    A correction already merged but not yet released does not block another: the new
+    one is checked against it and replaces it.
+    """
+    if not changed_by.strip():
+        raise ValueError("changed_by is blank")
+    reason = reason.strip()
+    [result] = lookup([query], repos)
+    if result.status is not Status.FOUND:
+        return ContentCorrectionCheck(
+            query,
+            reason,
+            None,
+            None,
+            None,
+            "",
+            (f"{result.status.value}: {result.detail}",),
+        )
+    location = result.locations[0]
+    errors = [] if reason else ["a reason is required"]
+    changes = _load(location.repo)
+    paths = layout.correction_paths(location.id)
+    try:
+        if changes.error:
+            raise RepoReadError(changes.error)
+        metadata_before, corrections = _correction_file(location, changes)
+        corrected_before = (
+            _read_text(location.repo, paths.corrected)
+            if paths.corrected in changes.files
+            else None
+        )
+        shipped, upstream = _row_xml(location)
+    except _READ_ERRORS as exc:
+        return ContentCorrectionCheck(
+            query, reason, location, None, None, "", (*errors, str(exc))
+        )
+
+    errors += _pending_removals(location, changes)
+    errors += _open_conflicts(location, changes.pull_requests, removing=False)
+    if corrected_before is not None and metadata_before is None:
+        errors.append(f"{paths.corrected} has no {paths.metadata} beside it")
+    if corrected_before is None and upstream is not None:
+        errors.append(
+            f"the dataset holds a correction of this document but {paths.corrected} "
+            f"is missing"
+        )
+    current = shipped if corrected_before is None else corrected_before
+    text, xml_errors, warnings = _check_xml(xml, current, location.metadata.get("doi"))
+    errors += xml_errors
+
+    correction = proposal = None
+    if not errors:
+        correction = Correction(
+            next_local_change_id(
+                location.id, changes.removals, corrections, changes.ledger
+            ),
+            ChangeType.CONTENT_CORRECTED,
+            reason,
+            changed_by,
+        )
+        try:
+            metadata_after = append_correction(metadata_before, location.id, correction)
+        except ChangeFileError as exc:
+            errors.append(str(exc))
+            correction = None
+        else:
+            proposal = CorrectionProposal(
+                location.repo,
+                location.id,
+                metadata_before,
+                metadata_after,
+                corrected_before,
+                text,
+                seed=(upstream or shipped) if corrected_before is None else None,
+            )
+    return ContentCorrectionCheck(
+        query,
+        reason,
+        location,
+        correction,
+        proposal,
+        current,
+        tuple(errors),
+        tuple(warnings),
+    )
+
+
 def _load(repo: Repo) -> _Changes:
     try:
         files = set(repo.reader.files())
@@ -167,26 +316,19 @@ def _load(repo: Repo) -> _Changes:
     return _Changes(files, text, removals, ledger, pull_requests)
 
 
-def _pending(
+def _removal_conflicts(
     location: Location, changes: _Changes
 ) -> tuple[list[str], list[Correction]]:
     """Why the document cannot be removed now, and the corrections it has had."""
     if changes.error:
         return [changes.error], []
-    recorded = changes.recorded
-    errors = [
-        f"a removal is already pending (local_change_id {r.local_change_id})"
-        for r in changes.removals
-        if r.id == location.id and (r.id, r.local_change_id) not in recorded
-    ]
-    errors += _open_conflicts(location, changes.pull_requests)
-    path = layout.correction_paths(location.id).metadata
-    if path not in changes.files:
-        return errors, []
+    errors = _pending_removals(location, changes)
+    errors += _open_conflicts(location, changes.pull_requests, removing=True)
     try:
-        corrections = read_correction(_read_text(location.repo, path), location.id)
+        _, corrections = _correction_file(location, changes)
     except _READ_ERRORS as exc:
         return [*errors, str(exc)], []
+    recorded = changes.recorded
     errors += [
         f"a correction is pending (local_change_id {c.local_change_id})"
         for c in corrections
@@ -195,10 +337,33 @@ def _pending(
     return errors, corrections
 
 
+def _pending_removals(location: Location, changes: _Changes) -> list[str]:
+    recorded = changes.recorded
+    return [
+        f"a removal is already pending (local_change_id {r.local_change_id})"
+        for r in changes.removals
+        if r.id == location.id and (r.id, r.local_change_id) not in recorded
+    ]
+
+
+def _correction_file(
+    location: Location, changes: _Changes
+) -> tuple[str | None, list[Correction]]:
+    """The document's `correction.yml` on `main`, as text and as entries."""
+    path = layout.correction_paths(location.id).metadata
+    if path not in changes.files:
+        return None, []
+    text = _read_text(location.repo, path)
+    return text, read_correction(text, location.id)
+
+
 def _open_conflicts(
-    location: Location, pull_requests: Sequence[PullRequest]
+    location: Location, pull_requests: Sequence[PullRequest], *, removing: bool
 ) -> list[str]:
-    """Any open PR on `removals.yml` blocks another: both would edit the one file."""
+    """Open PRs on this document's correction, or proposing its removal.
+
+    When removing, any open removal PR blocks: both would edit the one `removals.yml`.
+    """
     directory = layout.correction_paths(location.id).directory + "/"
     errors = []
     for pr in pull_requests:
@@ -208,12 +373,84 @@ def _open_conflicts(
         if layout.REMOVALS_PATH in pr.files:
             if location.id in _ids_added(pr.added[layout.REMOVALS_PATH]):
                 errors.append(f"already proposed for removal in {where}")
-            else:
+            elif removing:
                 errors.append(
                     f"{where} already proposes removals here; it has to be merged "
                     f"or closed first"
                 )
     return errors
+
+
+def _row_xml(location: Location) -> tuple[str, str | None]:
+    """The document's `xml` and `xml_upstream`, read from its shard without its PDF."""
+    table = location.repo.reader.read_columns(
+        location.shard, ("id", "xml", "xml_upstream")
+    )
+    for id_value, xml, upstream in zip(
+        table.column("id").to_pylist(),
+        table.column("xml").to_pylist(),
+        table.column("xml_upstream").to_pylist(),
+        strict=True,
+    ):
+        if id_value == location.id:
+            return xml, upstream
+    raise RepoReadError(f"{location.id} is not in {location.shard}")
+
+
+def _check_xml(
+    data: bytes, current: str, doi: str | None
+) -> tuple[str, list[str], list[str]]:
+    """The uploaded text, what stops it, and what only warns."""
+    if len(data) > MAX_XML_BYTES:
+        return "", [f"the XML is larger than {MAX_XML_BYTES // 1_000_000} MB"], []
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        return "", [f"the XML is not UTF-8 text: {exc}"], []
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as exc:
+        return text, [f"the XML is not well-formed: {exc}"], []
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    if text == current:
+        errors.append("the XML is the same as the current version")
+    was = parse_xml(current)
+    if was is not None and _local_name(root) != _local_name(was):
+        errors.append(
+            f"its root element is <{_local_name(root)}>, not <{_local_name(was)}>"
+        )
+    found = _article_doi(root)
+    if doi and found and _plain_doi(found) != _plain_doi(doi):
+        errors.append(f"its DOI is {found}, not the document's {doi}")
+    elif doi and not found:
+        warnings.append(
+            "it carries no DOI, so it cannot be checked to be the same article"
+        )
+    before, after = extract_licence(current).label, extract_licence(text).label
+    if before != after:
+        errors.append(
+            f"its licence statement reads {after!r} where the current one reads "
+            f"{before!r}; a licence change moves a document between repos, it is not "
+            f"a correction"
+        )
+    return text, errors, warnings
+
+
+def _local_name(element: ET.Element) -> str:
+    return element.tag.rsplit("}", 1)[-1]
+
+
+def _article_doi(root: ET.Element) -> str:
+    for element in root.iter():
+        if _local_name(element) == "article-id" and element.get("pub-id-type") == "doi":
+            return (element.text or "").strip()
+    return ""
+
+
+def _plain_doi(doi: str) -> str:
+    return re.sub(r"^https?://(dx\.)?doi\.org/", "", doi.strip().lower())
 
 
 def _ids_added(lines: Iterable[str]) -> set[str]:
