@@ -38,7 +38,7 @@ LICENCE_REPORTS_DIR ?= ./sciencebeam_dataset_builder/dataset/license/reports
 	licence-audit \
 	archive-cut archive-cut-render archive-cut-publish \
 	corpus-create-repo corpus-create-all-repos corpus-build corpus-build-upload \
-	change-ui
+	change-ui corpus-change
 
 install:
 	uv sync --frozen
@@ -207,3 +207,9 @@ corpus-build-upload:
 # previews against the local build instead, with submitting switched off.
 change-ui:
 	uv run -m sciencebeam_dataset_builder.corpus.change_ui $(RUN_ARGS)
+
+# What one corpus/tier has merged but not released, and the version it needs.
+# RUN_ARGS="--version v2.0.0" writes that release locally, for checking before upload.
+corpus-change:
+	uv run -m sciencebeam_dataset_builder.corpus.change_cli \
+		--corpus $(CORPUS) --tier $(TIER) $(RUN_ARGS)
