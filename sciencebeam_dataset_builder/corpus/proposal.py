@@ -1,20 +1,31 @@
-"""Opening checked removals as a pull request on their dataset repo.
+"""Opening checked changes as a pull request on their dataset repo.
 
-A pull request only adds entries to `changes/`; nothing published changes until a
-release applies them.
+A pull request only adds to `changes/`; nothing published changes until a release
+applies it.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sciencebeam_dataset_builder.corpus import layout
-from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo, RepoReadError
-from sciencebeam_dataset_builder.corpus.validate import RemovalCheck, RemovalProposal
+from sciencebeam_dataset_builder.corpus.repo_reader import (
+    HubRepo,
+    PullRequest,
+    RepoReadError,
+)
+from sciencebeam_dataset_builder.corpus.validate import (
+    ContentCorrectionCheck,
+    RemovalCheck,
+    RemovalProposal,
+    open_conflicts,
+)
 
 if TYPE_CHECKING:
     from huggingface_hub import HfApi
+
+TOOL_NOTE = "Proposed with the corpus change tool."
 
 
 class ProposalError(RuntimeError):
@@ -47,55 +58,69 @@ def submitter(token: str | None = None) -> str:
 def submit_removals(
     proposal: RemovalProposal, checks: Sequence[RemovalCheck]
 ) -> Submission:
-    """Open one pull request adding `proposal`'s entries to `removals.yml`.
-
-    `parent_commit` only sets where a pull request branches from, so the state it was
-    checked against is confirmed again here, immediately before opening it.
-    """
-    reader = proposal.repo.reader
-    if not isinstance(reader, HubRepo):
-        raise ProposalError(f"{proposal.repo.repo_id} is not read from the Hub")
-    now = HubRepo(reader.repo_id, reader.revision, reader.token)
-    try:
-        moved = now.commit != reader.commit
-        busy = [
-            pr for pr in now.open_pull_requests() if layout.REMOVALS_PATH in pr.files
-        ]
-    except RepoReadError as exc:
-        raise ProposalError(str(exc)) from exc
-    if moved:
-        raise ProposalError(f"{reader.revision} has moved since the check; check again")
-    if busy:
-        raise ProposalError(
-            f"pull request #{busy[0].num} ({busy[0].url}) now proposes removals here; "
-            f"check again"
-        )
-
-    from huggingface_hub import CommitOperationAdd, HfApi
-
-    api = HfApi(token=reader.token)
+    """Open one pull request adding `proposal`'s entries to `removals.yml`."""
+    reader = _hub_reader(proposal.repo.reader, proposal.repo.repo_id)
+    _recheck(
+        reader,
+        lambda prs: [
+            f"pull request #{pr.num} ({pr.url}) now proposes removals here"
+            for pr in prs
+            if layout.REMOVALS_PATH in pr.files
+        ],
+    )
+    api = _api(reader)
     title = removal_title(proposal)
-    content = proposal.after.encode("utf-8")
-    try:
-        info = api.create_commit(
-            reader.repo_id,
-            [CommitOperationAdd(layout.REMOVALS_PATH, content)],
-            commit_message=title,
-            commit_description=removal_description(proposal, checks),
-            repo_type="dataset",
-            create_pr=True,
-            parent_commit=reader.commit,
-        )
-    except Exception as exc:  # noqa: BLE001 - Hub calls fail in varied ways
-        raise ProposalError(f"could not open the pull request: {exc}") from exc
-    if info.pr_num is None or not info.pr_url:
-        raise ProposalError("the Hub made a commit but opened no pull request")
-    _verify(api, reader.repo_id, info.pr_num, info.pr_url, content)
+    files = {layout.REMOVALS_PATH: proposal.after.encode("utf-8")}
+    info = _open(api, reader, files, title, removal_description(proposal, checks))
+    _verify(api, reader.repo_id, info, files)
+    return Submission(reader.repo_id, info.pr_num, info.pr_url, title)
+
+
+def submit_correction(check: ContentCorrectionCheck) -> Submission:
+    """Open one pull request for a checked content correction.
+
+    A document's first correction is two commits on the one pull request - the XML as
+    harvested, then the fix - so its diff is exactly the correction.
+    """
+    proposal = check.proposal
+    if not check.ok or proposal is None:
+        raise ProposalError("only a correction that passed its checks can be proposed")
+    reader = _hub_reader(proposal.repo.reader, proposal.repo.repo_id)
+    _recheck(reader, lambda prs: open_conflicts(proposal.id, prs, removing=False))
+    paths = layout.correction_paths(proposal.id)
+    fix = {
+        paths.corrected: proposal.corrected_after.encode("utf-8"),
+        paths.metadata: proposal.metadata_after.encode("utf-8"),
+    }
+    api = _api(reader)
+    title = correction_title(check)
+    description = correction_description(check)
+    if proposal.seed is None:
+        info = _open(api, reader, fix, title, description)
+    else:
+        seed = {paths.corrected: proposal.seed.encode("utf-8")}
+        message = f"Start {paths.corrected} from the XML as harvested"
+        info = _open(api, reader, seed, message, description)
+        try:
+            api.create_commit(
+                reader.repo_id,
+                _operations(fix),
+                commit_message=title,
+                repo_type="dataset",
+                revision=f"refs/pr/{info.pr_num}",
+                parent_commit=info.oid,
+            )
+        except Exception as exc:  # noqa: BLE001 - Hub calls fail in varied ways
+            raise ProposalError(
+                f"opened {info.pr_url} with the original XML only; adding the fix "
+                f"failed: {exc}. Close it and submit again."
+            ) from exc
+    _verify(api, reader.repo_id, info, fix)
     return Submission(reader.repo_id, info.pr_num, info.pr_url, title)
 
 
 def removal_title(proposal: RemovalProposal) -> str:
-    name = proposal.repo.repo_id.rsplit("/", 1)[-1]
+    name = _repo_name(proposal.repo.repo_id)
     if len(proposal.removals) == 1:
         return f"Remove {proposal.removals[0].id} from {name}"
     return f"Remove {len(proposal.removals)} documents from {name}"
@@ -123,8 +148,8 @@ def removal_description(
         )
     return "\n".join(
         [
-            "Proposed with the corpus change tool. Merging records these removals on "
-            "`main`; the documents stay in the dataset until a release applies them.",
+            f"{TOOL_NOTE} Merging records these removals on `main`; the documents "
+            "stay in the dataset until a release applies them.",
             "",
             "- **Change type:** removed",
             f"- **Repo:** `{repo.repo_id}` (corpus `{repo.corpus.name}`, "
@@ -143,28 +168,141 @@ def removal_description(
     )
 
 
+def correction_title(check: ContentCorrectionCheck) -> str:
+    assert check.proposal is not None
+    return f"Correct {check.proposal.id} in {_repo_name(check.proposal.repo.repo_id)}"
+
+
+def correction_description(check: ContentCorrectionCheck) -> str:
+    """What a reviewer needs, and how to read the diff."""
+    proposal, correction, where = check.proposal, check.correction, check.location
+    assert proposal is not None and correction is not None and where is not None
+    repo = proposal.repo
+    commit = repo.reader.commit if isinstance(repo.reader, HubRepo) else ""
+    paths = layout.correction_paths(proposal.id)
+    if proposal.seed is not None:
+        diff = (
+            "The first commit is the XML as harvested and the second is the fix, so "
+            "the second commit's diff is exactly the correction."
+        )
+    else:
+        diff = (
+            "This document has been corrected before, so the diff is against its "
+            "last proposed correction."
+        )
+    return "\n".join(
+        [
+            f"{TOOL_NOTE} Merging records this correction on `main`; the dataset "
+            "keeps the current XML until a release applies it.",
+            "",
+            "- **Change type:** content-corrected",
+            f"- **Document:** `{proposal.id}` ({where.split}, `{where.parquet_file_name}`)",
+            f"- **Repo:** `{repo.repo_id}` (corpus `{repo.corpus.name}`, "
+            f"{repo.tier.value})",
+            f"- **Checked against:** release `{where.release}`, commit `{commit[:12]}`",
+            f"- **Submitted by:** {correction.changed_by}",
+            f"- **local_change_id:** {correction.local_change_id}",
+            f"- **Files changed:** `{paths.corrected}`, `{paths.metadata}`",
+            "",
+            "**Reason:**",
+            "",
+            *(f"> {line}" for line in correction.change_reason.splitlines()),
+            "",
+            diff,
+            "",
+            "**Validation:** the XML parses, and keeps the document's root element, DOI "
+            "and licence statement. Nothing else is pending on `main` or open for this "
+            "document.",
+            *(f"\n**Warning:** {warning}" for warning in check.warnings),
+        ]
+    )
+
+
+def _hub_reader(reader: Any, repo_id: str) -> HubRepo:
+    if not isinstance(reader, HubRepo):
+        raise ProposalError(f"{repo_id} is not read from the Hub")
+    return reader
+
+
+def _recheck(
+    reader: HubRepo, conflicts: Callable[[list[PullRequest]], list[str]]
+) -> None:
+    """Confirm the state the change was checked against, immediately before opening.
+
+    `parent_commit` only sets where a pull request branches from; it does not refuse a
+    `main` that has moved.
+    """
+    now = HubRepo(reader.repo_id, reader.revision, reader.token)
+    try:
+        moved = now.commit != reader.commit
+        found = conflicts(now.open_pull_requests())
+    except RepoReadError as exc:
+        raise ProposalError(str(exc)) from exc
+    if moved:
+        raise ProposalError(f"{reader.revision} has moved since the check; check again")
+    if found:
+        raise ProposalError(f"{found[0]}; check again")
+
+
+def _api(reader: HubRepo) -> "HfApi":
+    from huggingface_hub import HfApi
+
+    return HfApi(token=reader.token)
+
+
+def _operations(files: Mapping[str, bytes]) -> list[Any]:
+    from huggingface_hub import CommitOperationAdd
+
+    return [CommitOperationAdd(path, content) for path, content in files.items()]
+
+
+def _open(
+    api: "HfApi",
+    reader: HubRepo,
+    files: Mapping[str, bytes],
+    message: str,
+    description: str,
+) -> Any:
+    """The pull request's first commit, branched from the commit that was checked."""
+    try:
+        info = api.create_commit(
+            reader.repo_id,
+            _operations(files),
+            commit_message=message,
+            commit_description=description,
+            repo_type="dataset",
+            create_pr=True,
+            parent_commit=reader.commit,
+        )
+    except Exception as exc:  # noqa: BLE001 - Hub calls fail in varied ways
+        raise ProposalError(f"could not open the pull request: {exc}") from exc
+    if info.pr_num is None or not info.pr_url:
+        raise ProposalError("the Hub made a commit but opened no pull request")
+    return info
+
+
+def _verify(api: "HfApi", repo_id: str, info: Any, sent: Mapping[str, bytes]) -> None:
+    """Read each file back from the pull request: Hub transfers have truncated before."""
+    for path, content in sent.items():
+        try:
+            local = api.hf_hub_download(
+                repo_id, path, repo_type="dataset", revision=f"refs/pr/{info.pr_num}"
+            )
+            received = Path(str(local)).read_bytes()
+        except Exception as exc:  # noqa: BLE001 - Hub calls fail in varied ways
+            raise ProposalError(
+                f"opened {info.pr_url} but could not read {path} back: {exc}"
+            ) from exc
+        if received != content:
+            raise ProposalError(
+                f"opened {info.pr_url} but its {path} is not what was checked; review "
+                f"it before merging"
+            )
+
+
+def _repo_name(repo_id: str) -> str:
+    return repo_id.rsplit("/", 1)[-1]
+
+
 def _cell(text: str) -> str:
     return " ".join(text.split()).replace("|", "\\|")
-
-
-def _verify(api: "HfApi", repo_id: str, pr_num: int, pr_url: str, sent: bytes) -> None:
-    """Read the file back from the pull request: Hub transfers have truncated before."""
-    try:
-        local = api.hf_hub_download(
-            repo_id,
-            layout.REMOVALS_PATH,
-            repo_type="dataset",
-            revision=f"refs/pr/{pr_num}",
-        )
-        if not isinstance(local, str):
-            raise ProposalError(f"{layout.REMOVALS_PATH} was not downloaded")
-        received = Path(local).read_bytes()
-    except Exception as exc:  # noqa: BLE001 - Hub calls fail in varied ways
-        raise ProposalError(
-            f"opened {pr_url} but could not read it back: {exc}"
-        ) from exc
-    if received != sent:
-        raise ProposalError(
-            f"opened {pr_url} but its {layout.REMOVALS_PATH} is not what was checked; "
-            f"review it before merging"
-        )

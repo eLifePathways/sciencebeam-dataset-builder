@@ -245,7 +245,7 @@ def check_content_correction(
         )
 
     errors += _pending_removals(location, changes)
-    errors += _open_conflicts(location, changes.pull_requests, removing=False)
+    errors += open_conflicts(location.id, changes.pull_requests, removing=False)
     if corrected_before is not None and metadata_before is None:
         errors.append(f"{paths.corrected} has no {paths.metadata} beside it")
     if corrected_before is None and upstream is not None:
@@ -323,7 +323,7 @@ def _removal_conflicts(
     if changes.error:
         return [changes.error], []
     errors = _pending_removals(location, changes)
-    errors += _open_conflicts(location, changes.pull_requests, removing=True)
+    errors += open_conflicts(location.id, changes.pull_requests, removing=True)
     try:
         _, corrections = _correction_file(location, changes)
     except _READ_ERRORS as exc:
@@ -357,21 +357,21 @@ def _correction_file(
     return text, read_correction(text, location.id)
 
 
-def _open_conflicts(
-    location: Location, pull_requests: Sequence[PullRequest], *, removing: bool
+def open_conflicts(
+    id_value: str, pull_requests: Sequence[PullRequest], *, removing: bool
 ) -> list[str]:
     """Open PRs on this document's correction, or proposing its removal.
 
     When removing, any open removal PR blocks: both would edit the one `removals.yml`.
     """
-    directory = layout.correction_paths(location.id).directory + "/"
+    directory = layout.correction_paths(id_value).directory + "/"
     errors = []
     for pr in pull_requests:
         where = f"open pull request #{pr.num} ({pr.url})"
         if any(path.startswith(directory) for path in pr.files):
             errors.append(f"{where} changes its correction")
         if layout.REMOVALS_PATH in pr.files:
-            if location.id in _ids_added(pr.added[layout.REMOVALS_PATH]):
+            if id_value in _ids_added(pr.added[layout.REMOVALS_PATH]):
                 errors.append(f"already proposed for removal in {where}")
             elif removing:
                 errors.append(

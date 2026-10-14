@@ -85,7 +85,11 @@ class _Api:
         if not revision.startswith("refs/pr/"):
             return str(self.hub.roots[repo_id] / filename)
         num = int(revision.rsplit("/", 1)[1])
-        sent = next(o for o in self.hub.opened if o["num"] == num)["files"][filename]
+        sent = next(
+            o["files"][filename]
+            for o in reversed(self.hub.opened)
+            if o["num"] == num and filename in o["files"]
+        )
         local = self.hub.roots[repo_id].parent / f"pr-{num}" / filename
         local.parent.mkdir(parents=True, exist_ok=True)
         local.write_bytes(sent[:-1] if self.hub.tamper else sent)
@@ -117,16 +121,30 @@ class _Api:
         operations: list[Any],
         *,
         commit_message: str,
-        commit_description: str,
         repo_type: str,
-        create_pr: bool,
-        parent_commit: str,
+        commit_description: str | None = None,
+        create_pr: bool = False,
+        parent_commit: str | None = None,
+        revision: str | None = None,
     ) -> SimpleNamespace:
-        self.hub.record("create_commit", repo_id, parent_commit)
-        num = 100 + len(self.hub.opened)
+        """A new pull request, or with `revision` a commit added to an open one.
+
+        Recorded as `create_commit` and `add_commit`, so a test can fail just one.
+        """
+        if create_pr:
+            self.hub.record("create_commit", repo_id, parent_commit or "")
+            num = 100 + sum(o["create_pr"] for o in self.hub.opened)
+        else:
+            assert revision is not None and revision.startswith("refs/pr/")
+            self.hub.record("add_commit", repo_id, parent_commit or "")
+            num = int(revision.rsplit("/", 1)[1])
+            last = [o for o in self.hub.opened if o["num"] == num][-1]
+            assert parent_commit == last["oid"], "the pull request moved"
+        oid = f"pr{num}-{len(self.hub.opened)}"
         self.hub.opened.append(
             {
                 "num": num,
+                "oid": oid,
                 "files": {op.path_in_repo: op.path_or_fileobj for op in operations},
                 "message": commit_message,
                 "description": commit_description,
@@ -134,7 +152,7 @@ class _Api:
                 "parent_commit": parent_commit,
             }
         )
-        return SimpleNamespace(pr_num=num, pr_url=_url(repo_id, num))
+        return SimpleNamespace(pr_num=num, pr_url=_url(repo_id, num), oid=oid)
 
     def whoami(self) -> dict[str, Any]:
         self.hub.record("whoami", "", "")
