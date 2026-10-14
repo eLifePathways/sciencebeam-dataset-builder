@@ -5,9 +5,11 @@ rewrites each affected shard once, and writes the new release locally - its shar
 ledger, manifest and card - for a separate, deliberate upload.
 """
 
+import hashlib
+import json
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -197,8 +199,8 @@ def apply(
     manifest = layout.release_manifest_path(version)
     if manifest in pending.files:
         raise ApplyError(f"{version} is already released")
-    root = output_dir / layout.repo_name(repo.corpus.name, repo.tier) / version
-    if root.exists():
+    root = release_root(output_dir, repo.repo_id, version)
+    if root.exists() or record_path(root).exists():
         raise ApplyError(f"{root} already exists; remove it to apply again")
 
     stamp = timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -230,6 +232,14 @@ def apply(
     paths += [layout.LEDGER_PATH, manifest, layout.CARD_PATH]
 
     commit = repo.reader.commit if isinstance(repo.reader, HubRepo) else ""
+    ReleaseRecord(
+        repo.repo_id,
+        pending.base_release,
+        version,
+        commit,
+        dict(Counter(c.change_type.value for c in changes)),
+        {path: _sha256(root / path) for path in paths},
+    ).write(record_path(root))
     return AppliedRelease(
         repo,
         pending.base_release,
@@ -241,6 +251,49 @@ def apply(
         tuple(changes),
         counts,
     )
+
+
+def release_root(output_dir: Path, repo_id: str, version: str) -> Path:
+    """Where a release is written: `<output>/<repo name>/<version>/`."""
+    layout.version_key(version)
+    return output_dir / repo_id.rsplit("/", 1)[-1] / version
+
+
+def record_path(root: Path) -> Path:
+    """Beside the release, so it is never mistaken for one of the repo's files."""
+    return root.with_name(f"{root.name}.json")
+
+
+@dataclass(frozen=True)
+class ReleaseRecord:
+    """What a release holds and the commit it was made from, so an upload sends
+    exactly what was checked, onto exactly what it was made from."""
+
+    repo_id: str
+    base_release: str
+    version: str
+    commit: str
+    changes: Mapping[str, int]
+    files: Mapping[str, str]
+
+    def write(self, path: Path) -> None:
+        path.write_text(json.dumps(asdict(self), indent=2) + "\n", encoding="utf-8")
+
+    @classmethod
+    def read(cls, path: Path) -> "ReleaseRecord":
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return cls(**data)
+        except (OSError, ValueError, TypeError) as exc:
+            raise ApplyError(f"{path} cannot be read: {exc}") from exc
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _check_applicable(

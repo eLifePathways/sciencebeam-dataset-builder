@@ -1,4 +1,4 @@
-"""Apply a corpus repo's merged changes as a new release, written locally first.
+"""Apply a corpus repo's merged changes as a new release: written locally, then uploaded.
 
     # what is pending on main, and the version it needs
     python -m sciencebeam_dataset_builder.corpus.change_cli --corpus biorxiv --tier open
@@ -7,8 +7,13 @@
     python -m sciencebeam_dataset_builder.corpus.change_cli --corpus biorxiv --tier open \\
         --version v2.0.0
 
+    # then upload exactly what was written and checked, and tag it
+    python -m sciencebeam_dataset_builder.corpus.change_cli --corpus biorxiv --tier open \\
+        --version v2.0.0 --upload
+
 The repo is read from the Hub at the commit `main` names when it is first read, with
-HF_TOKEN or the saved login; `--local-dir` reads the tree `build_cli` writes instead.
+HF_TOKEN or the saved login; `--local-dir` reads the tree `build_cli` writes instead,
+and what is made from it cannot be uploaded.
 """
 
 import argparse
@@ -23,6 +28,7 @@ from sciencebeam_dataset_builder.corpus.apply_changes import (
     apply,
     next_version,
     read_pending,
+    release_root,
 )
 from sciencebeam_dataset_builder.corpus.layout import Tier
 from sciencebeam_dataset_builder.corpus.lookup import Repo
@@ -31,6 +37,10 @@ from sciencebeam_dataset_builder.corpus.repo_reader import (
     HubRepo,
     LocalRepo,
     RepoReader,
+)
+from sciencebeam_dataset_builder.corpus.upload_changes import (
+    UploadError,
+    upload_release,
 )
 
 DEFAULT_OUTPUT_DIR = Path("data/output/corpus-change")
@@ -48,12 +58,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="The release to write. Without it, only report what is pending.",
     )
     parser.add_argument(
+        "--upload",
+        action="store_true",
+        help="Upload the release already written for --version, and tag it. A "
+        "separate, deliberate step - never implied by writing it.",
+    )
+    parser.add_argument(
         "--local-dir",
         type=Path,
         help="Read the repo from this directory, as build_cli writes it, not the Hub.",
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.upload and not args.version:
+        parser.error("--upload needs the --version that was written")
+    return args
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -62,13 +81,16 @@ def main(argv: list[str] | None = None) -> None:
     tier = Tier(args.tier)
     if tier not in corpus.tiers:
         raise SystemExit(f"{corpus.name!r} has no {tier.value} repo")
+    if args.upload:
+        _upload(release_root(args.output_dir, corpus.repo_id(tier), args.version))
+        return
+
     reader: RepoReader = (
         LocalRepo(args.local_dir / layout.repo_name(corpus.name, tier))
         if args.local_dir
         else HubRepo(corpus.repo_id(tier))
     )
     repo = Repo(corpus, tier, reader)
-
     try:
         pending = read_pending(repo)
     except (ApplyError, OSError, ValueError) as exc:
@@ -90,7 +112,18 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Wrote {release.version} to {release.root}:")
     for path in release.paths:
         print(f"  {path}")
-    print("Local only. Check it before uploading.")
+    print("Local only. Check it, then pass --upload to upload exactly this.")
+
+
+def _upload(root: Path) -> None:
+    try:
+        uploaded = upload_release(root)
+    except UploadError as exc:
+        raise SystemExit(f"Not uploaded: {exc}") from exc
+    print(
+        f"Uploaded {uploaded.version} to {uploaded.repo_id} as commit "
+        f"{uploaded.commit[:12]}, verified, and tagged {uploaded.version}."
+    )
 
 
 def _report(repo: Repo, pending: Pending) -> None:
