@@ -4,7 +4,7 @@
 {% if ok %}
 <h2>Submitted for review</h2>
 <p class="lead">The pull request needs a reviewer to merge it. The document keeps its current
-  XML until the next release after that.</p>
+  {{ kept }} until the next release after that.</p>
 <ul class="outcomes">
   <li>
     {{ m.badge("ok", "Opened") }} <strong>{{ repo_id }}</strong> ·

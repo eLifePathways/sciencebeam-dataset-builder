@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% import "macros.html" as m with context %}
+{% block content %}
+<h2>Correct the metadata</h2>
+<p class="lead">Change only the values that are wrong; the others are left as they are. Each
+  value is checked against its field's form before anything is proposed. Empty a value to
+  clear it.</p>
+
+{{ m.document_card(document) }}
+
+<form method="post" action="/corrections/metadata/check">
+  {{ m.csrf_field() }}
+  <input type="hidden" name="uid" value="{{ uid }}">
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th scope="col">Field</th><th scope="col">Value</th></tr>
+      </thead>
+      <tbody>
+        {% for f in fields %}
+        <tr>
+          <td>
+            <label for="field-{{ f.name }}">{{ f.label }}</label>
+            <span class="hint" id="hint-{{ f.name }}">{{ f.hint }}</span>
+          </td>
+          <td>
+            <input type="text" id="field-{{ f.name }}" name="field:{{ f.name }}"
+                   value="{{ f.value if f.value is not none else '' }}" spellcheck="false"
+                   aria-describedby="hint-{{ f.name }}">
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="field spaced">
+    <label for="reason">Reason for the correction</label>
+    <span class="hint" id="reason-hint">Recorded with the change and shown to the reviewer.</span>
+    <textarea id="reason" name="reason" class="reason" maxlength="{{ max_reason }}"
+              aria-describedby="reason-hint" required>{{ reason }}</textarea>
+  </div>
+  <div class="actions">
+    <button class="primary">Check the correction</button>
+    <span class="spacer"></span>
+    <a class="button back" href="/corrections/metadata">Back</a>
+  </div>
+</form>
+{% endblock %}

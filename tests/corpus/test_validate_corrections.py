@@ -11,7 +11,10 @@ from sciencebeam_dataset_builder.corpus.registry import CORPORA
 from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo
 from sciencebeam_dataset_builder.corpus.validate import (
     ContentCorrectionCheck,
+    MetadataCorrectionCheck,
     check_content_correction,
+    check_metadata_correction,
+    current_metadata,
 )
 from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_diff
 from tests.corpus._repos import jats, publish, root_of, write_file
@@ -216,3 +219,100 @@ class TestOpenPullRequests:
         """Only removals share one file; a correction has its own directory."""
         hub.pull_requests = [FakePullRequest(5, "Remove b", removals_diff("b"))]
         assert _check(on_hub).ok
+
+
+def _metadata(
+    repo: Repo,
+    reason: str = "the harvest year, not the publication date",
+    **values: str,
+) -> MetadataCorrectionCheck:
+    return check_metadata_correction("a", reason, values, [repo], "hazal")
+
+
+class TestMetadataCorrection:
+    def test_a_changed_value_is_proposed_without_touching_the_xml(self, repo):
+        check = _metadata(repo, pub_date="2022-10-31")
+        assert check.ok
+        assert check.changes == {"pub_date": "2022-10-31"}
+        assert check.current["pub_date"] == "2026"
+        assert check.correction is not None
+        assert check.correction.change_type is ChangeType.METADATA_CORRECTED
+        assert check.correction.fields == {"pub_date": "2022-10-31"}
+        proposal = check.proposal
+        assert proposal is not None
+        assert (proposal.corrected_after, proposal.seed) == (None, None)
+        assert read_correction(proposal.metadata_after, "a") == [check.correction]
+
+    def test_unchanged_values_are_left_out(self, repo):
+        check = _metadata(repo, doi="10.1/a", pub_date="2022", version="")
+        assert check.changes == {"pub_date": "2022"}
+
+    def test_a_doi_link_is_kept_as_the_bare_doi(self, repo):
+        assert _metadata(repo, doi="https://doi.org/10.1/A2").changes == {
+            "doi": "10.1/A2"
+        }
+
+    @pytest.mark.parametrize(
+        ("name", "value"),
+        [
+            ("doi", "not a doi"),
+            ("version", "two words"),
+            ("pub_date", "2022-13"),
+            ("pub_date", "31/10/2022"),
+            ("xml_source_url", "ftp://example.org/a.xml"),
+            ("pdf_downloaded_at", "2026-10-01"),
+            ("pdf_downloaded_at", "2026-10-01T09:14:22"),
+        ],
+    )
+    def test_a_value_that_does_not_fit_its_field_is_refused(self, repo, name, value):
+        errors = _metadata(repo, **{name: value}).errors
+        assert any(e.startswith(f"{name} ") for e in errors)
+
+    def test_a_well_formed_timestamp_and_url_pass(self, repo):
+        check = _metadata(
+            repo,
+            xml_source_url="https://europepmc.org/a.xml",
+            xml_downloaded_at="2026-10-01T09:14:22.123456+00:00",
+        )
+        assert check.ok
+
+    def test_clearing_a_value_only_warns(self, repo):
+        check = _metadata(repo, doi="")
+        assert check.ok
+        assert check.changes == {"doi": None}
+        assert "clears doi" in check.warnings[0]
+
+    def test_nothing_changing_is_refused(self, repo):
+        assert "nothing changes" in _metadata(repo, pub_date="2026").errors[0]
+
+    def test_a_field_that_cannot_be_edited_is_refused(self, repo):
+        errors = _metadata(repo, licence="CC0 1.0", pub_date="2022").errors
+        assert any("licence cannot be corrected here" in e for e in errors)
+
+    def test_a_reason_is_required(self, repo):
+        assert "a reason is required" in _metadata(repo, " ", pub_date="2022").errors
+
+    def test_a_pending_metadata_correction_is_what_reads_as_now(self, repo):
+        write_file(repo, PATHS.metadata, _correction_yml(1, "metadata-corrected"))
+        location = check_content_correction(
+            "a", REASON, FIXED.encode(), [repo], "hazal"
+        ).location
+        assert location is not None
+        assert current_metadata(location)["pub_date"] == "2021"
+        check = _metadata(repo, pub_date="2021")
+        assert "nothing changes" in check.errors[0]
+        later = _metadata(repo, pub_date="2020").correction
+        assert later is not None
+        assert later.local_change_id == 2
+
+    def test_a_pending_removal_is_refused(self, repo):
+        write_file(
+            repo,
+            layout.REMOVALS_PATH,
+            "removals:\n  - id: a\n    local_change_id: 1\n    change_reason: x\n"
+            "    changed_by: someone\n",
+        )
+        assert any(
+            "removal is already pending" in e
+            for e in _metadata(repo, pub_date="2022").errors
+        )

@@ -2,14 +2,17 @@
 
 import re
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
+from urllib.parse import urlparse
 
 import pyarrow as pa
 import yaml
 
 from sciencebeam_dataset_builder.corpus import layout
 from sciencebeam_dataset_builder.corpus.change_files import (
+    EDITABLE_FIELDS,
     ChangeFileError,
     Correction,
     Removal,
@@ -71,8 +74,9 @@ class RemovalProposal:
 class CorrectionProposal:
     """What one correction writes into its document's `changes/corrections/<id>/`.
 
-    `seed` is set only for a document's first content correction: `corrected.xml` is
-    committed as it was harvested before the fix is, so the pull request's diff is
+    `corrected_after` is None for a metadata correction, which leaves `corrected.xml`
+    alone. `seed` is set only for a document's first content correction: `corrected.xml`
+    is committed as it was harvested before the fix is, so the pull request's diff is
     exactly the fix.
     """
 
@@ -80,9 +84,32 @@ class CorrectionProposal:
     id: str
     metadata_before: str | None
     metadata_after: str
-    corrected_before: str | None
-    corrected_after: str
-    seed: str | None
+    corrected_before: str | None = None
+    corrected_after: str | None = None
+    seed: str | None = None
+
+
+@dataclass(frozen=True)
+class MetadataCorrectionCheck:
+    """One requested metadata correction, whether it may be proposed, and what it does.
+
+    `current` is each editable field as it reads now, with any correction merged but not
+    yet released applied; `changes` holds only the fields asked to differ from it.
+    """
+
+    query: str
+    reason: str
+    location: Location | None
+    correction: Correction | None
+    proposal: CorrectionProposal | None
+    current: Mapping[str, str | None]
+    changes: Mapping[str, str | None]
+    errors: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
 
 
 @dataclass(frozen=True)
@@ -294,6 +321,108 @@ def check_content_correction(
     )
 
 
+def check_metadata_correction(
+    query: str,
+    reason: str,
+    values: Mapping[str, str],
+    repos: Sequence[Repo],
+    changed_by: str,
+) -> MetadataCorrectionCheck:
+    """Check new values for some of a document's editable fields.
+
+    A field whose value is unchanged is left out, so `values` may carry every field. An
+    empty value clears the field.
+    """
+    if not changed_by.strip():
+        raise ValueError("changed_by is blank")
+    reason = reason.strip()
+    [result] = lookup([query], repos)
+    if result.status is not Status.FOUND:
+        return MetadataCorrectionCheck(
+            query,
+            reason,
+            None,
+            None,
+            None,
+            {},
+            {},
+            (f"{result.status.value}: {result.detail}",),
+        )
+    location = result.locations[0]
+    errors = [] if reason else ["a reason is required"]
+    if unknown := sorted(set(values) - set(EDITABLE_FIELDS)):
+        errors.append(f"{', '.join(unknown)} cannot be corrected here")
+    changes = _load(location.repo)
+    try:
+        if changes.error:
+            raise RepoReadError(changes.error)
+        metadata_before, corrections = _correction_file(location, changes)
+    except _READ_ERRORS as exc:
+        return MetadataCorrectionCheck(
+            query, reason, location, None, None, {}, {}, (*errors, str(exc))
+        )
+
+    current = _effective_metadata(location, corrections, changes.recorded)
+    requested: dict[str, str | None] = {}
+    warnings = []
+    for name in EDITABLE_FIELDS:
+        if name not in values:
+            continue
+        value = _normal_value(name, values[name])
+        if value == current[name]:
+            continue
+        requested[name] = value
+        if value is None:
+            warnings.append(f"it clears {name}, which is {current[name]!r} now")
+        elif problem := _field_problem(name, value):
+            errors.append(f"{name} {problem}")
+    if not requested:
+        errors.append("nothing changes: every value is the same as now")
+    errors += _pending_removals(location, changes)
+    errors += open_conflicts(location.id, changes.pull_requests, removing=False)
+
+    correction = proposal = None
+    if not errors:
+        correction = Correction(
+            next_local_change_id(
+                location.id, changes.removals, corrections, changes.ledger
+            ),
+            ChangeType.METADATA_CORRECTED,
+            reason,
+            changed_by,
+            fields=requested,
+        )
+        try:
+            metadata_after = append_correction(metadata_before, location.id, correction)
+        except ChangeFileError as exc:
+            errors.append(str(exc))
+            correction = None
+        else:
+            proposal = CorrectionProposal(
+                location.repo, location.id, metadata_before, metadata_after
+            )
+    return MetadataCorrectionCheck(
+        query,
+        reason,
+        location,
+        correction,
+        proposal,
+        current,
+        requested,
+        tuple(errors),
+        tuple(warnings),
+    )
+
+
+def current_metadata(location: Location) -> dict[str, str | None]:
+    """Each editable field as it reads now, with any unreleased correction applied."""
+    changes = _load(location.repo)
+    if changes.error:
+        raise RepoReadError(changes.error)
+    _, corrections = _correction_file(location, changes)
+    return _effective_metadata(location, corrections, changes.recorded)
+
+
 def current_xml(location: Location) -> str:
     """What the document reads as now: its last correction on `main`, else the XML the
     dataset ships. The text a correction should start from."""
@@ -446,6 +575,68 @@ def _check_xml(
             f"a correction"
         )
     return text, errors, warnings
+
+
+def _effective_metadata(
+    location: Location,
+    corrections: Sequence[Correction],
+    recorded: set[tuple[str, int]],
+) -> dict[str, str | None]:
+    """The row's values, then each metadata correction not yet released, in order."""
+    values = {name: location.metadata.get(name) for name in EDITABLE_FIELDS}
+    for correction in corrections:
+        if (
+            correction.change_type is ChangeType.METADATA_CORRECTED
+            and (location.id, correction.local_change_id) not in recorded
+        ):
+            values.update(correction.fields)
+    return values
+
+
+def _normal_value(name: str, raw: str) -> str | None:
+    """Trimmed, empty as None, and a DOI without the resolver in front of it."""
+    value = raw.strip()
+    if name == "doi":
+        value = re.sub(r"^(https?://(dx\.)?doi\.org/|doi:)", "", value, flags=re.I)
+    return value or None
+
+
+def _field_problem(name: str, value: str) -> str:
+    """Why a value does not fit its field, or nothing."""
+    if name == "doi" and not re.fullmatch(r"10\.\d{4,9}/\S+", value):
+        return "is not a DOI like 10.1101/2022.01.01.000000"
+    if name == "version" and (len(value) > 32 or re.search(r"\s", value)):
+        return "has to be one short word, like 2"
+    if name == "pub_date" and not _is_date(value):
+        return "has to be a date like 2022-10-31, 2022-10 or 2022"
+    if name.endswith("_url"):
+        url = urlparse(value)
+        if url.scheme not in ("http", "https") or not url.netloc or " " in value:
+            return "has to be an http or https address"
+    if name.endswith("_downloaded_at") and not _is_timestamp(value):
+        return "has to be a time with its time zone, like 2026-10-01T09:14:22+00:00"
+    return ""
+
+
+def _is_date(value: str) -> bool:
+    """A real date, as precise as the source is: year, month or day."""
+    forms = {r"\d{4}": "%Y", r"\d{4}-\d{2}": "%Y-%m", r"\d{4}-\d{2}-\d{2}": "%Y-%m-%d"}
+    for pattern, form in forms.items():
+        if re.fullmatch(pattern, value):
+            try:
+                datetime.strptime(value, form)
+            except ValueError:
+                return False
+            return True
+    return False
+
+
+def _is_timestamp(value: str) -> bool:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return "T" in value and parsed.tzinfo is not None
 
 
 def _local_name(element: ET.Element) -> str:

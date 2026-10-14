@@ -16,6 +16,7 @@ from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo
 from sciencebeam_dataset_builder.corpus.validate import (
     ContentCorrectionCheck,
     check_content_correction,
+    check_metadata_correction,
 )
 from tests.corpus._fake_hub import FakeHub, FakePullRequest
 from tests.corpus._repos import jats, publish, root_of, write_file
@@ -130,3 +131,29 @@ class TestRefusals:
         check = check_content_correction("a", REASON, FIXED.encode(), [local], "hazal")
         with pytest.raises(ProposalError, match="not read from the Hub"):
             submit_correction(check)
+
+
+class TestAMetadataCorrection:
+    @pytest.fixture
+    def check(self, repo):
+        check = check_metadata_correction(
+            "a", "harvest year", {"pub_date": "2022-10-31", "doi": ""}, [repo], "hazal"
+        )
+        assert check.ok, check.errors
+        return check
+
+    def test_it_is_one_commit_of_correction_yml_alone(self, hub, check):
+        submission = submit_correction(check)
+        [only] = hub.opened
+        assert set(only["files"]) == {PATHS.metadata}
+        [entry] = read_correction(only["files"][PATHS.metadata].decode(), "a")
+        assert entry.fields == {"pub_date": "2022-10-31", "doi": None}
+        assert submission.title == "Correct a metadata in sciencebeam-dataset-biorxiv"
+
+    def test_the_description_shows_each_value_before_and_after(self, hub, check):
+        text = correction_description(check)
+        assert "**Change type:** metadata-corrected" in text
+        assert "| pub_date | `2026` | `2022-10-31` |" in text
+        assert "| doi | `10.1/a` | *empty* |" in text
+        assert f"**Files changed:** `{PATHS.metadata}`" in text
+        assert "keeps the current metadata" in text

@@ -19,8 +19,8 @@ from sciencebeam_dataset_builder.corpus.change_ui.pages import (
     PageError,
     Pages,
     Steps,
-    digest,
     location_view,
+    proposal_digest,
     safe_url,
     text,
 )
@@ -65,6 +65,8 @@ def routes(pages: Pages, repos: Callable[[], Sequence[Repo]]) -> APIRouter:
             STEPS,
             "document",
             uid=uid,
+            action="/corrections/content/find",
+            what="XML",
             error=error,
             status_code=status_code,
         )
@@ -99,7 +101,9 @@ def routes(pages: Pages, repos: Callable[[], Sequence[Repo]]) -> APIRouter:
     ) -> HTMLResponse:
         proposal = check.proposal
         lines, truncated = (
-            _diff(check.current, proposal.corrected_after) if proposal else ([], False)
+            _diff(check.current, proposal.corrected_after or "")
+            if proposal
+            else ([], False)
         )
         added = (
             proposal.metadata_after.removeprefix(proposal.metadata_before or "")
@@ -115,7 +119,7 @@ def routes(pages: Pages, repos: Callable[[], Sequence[Repo]]) -> APIRouter:
             document=location_view(check.location) if check.location else None,
             uid=check.location.uid if check.location else check.query,
             xml=base64.b64encode(xml).decode("ascii"),
-            reviewed=_digest(check),
+            reviewed=proposal_digest(check.proposal),
             diff=lines,
             truncated=truncated,
             max_diff=MAX_DIFF_LINES,
@@ -230,7 +234,7 @@ def routes(pages: Pages, repos: Callable[[], Sequence[Repo]]) -> APIRouter:
                 error="The correction no longer passes the checks. Review it again.",
                 status_code=409,
             )
-        if _digest(result) != text(data.get("reviewed")):
+        if proposal_digest(result.proposal) != text(data.get("reviewed")):
             return review(
                 request,
                 result,
@@ -256,6 +260,7 @@ def routes(pages: Pages, repos: Callable[[], Sequence[Repo]]) -> APIRouter:
             STEPS,
             "done",
             ok=True,
+            kept="XML",
             repo_id=submission.repo_id,
             pr_num=submission.pr_num,
             pr_url=safe_url(submission.pr_url),
@@ -263,16 +268,6 @@ def routes(pages: Pages, repos: Callable[[], Sequence[Repo]]) -> APIRouter:
         )
 
     return router
-
-
-def _digest(check: ContentCorrectionCheck) -> str:
-    """Everything the pull request would write, so a changed proposal is noticed."""
-    proposal = check.proposal
-    if proposal is None:
-        return ""
-    return digest(
-        proposal.seed or "", proposal.corrected_after, proposal.metadata_after
-    )
 
 
 def _diff(before: str, after: str) -> tuple[list[tuple[str, str]], bool]:

@@ -2,10 +2,10 @@
 {% import "macros.html" as m with context %}
 {% block content %}
 <h2>Which document?</h2>
-<p class="lead">Give the id of the document whose XML you are correcting. It can be bare, or
-  carry its source, like biorxiv__10.1101_2022.01.01.000000.</p>
+<p class="lead">Give the id of the document whose {{ what }} you are correcting. It can be
+  bare, or carry its source, like biorxiv__10.1101_2022.01.01.000000.</p>
 
-<form method="post" action="/corrections/content/find">
+<form method="post" action="{{ action }}">
   {{ m.csrf_field() }}
   <div class="field">
     <label for="uid">Document id</label>

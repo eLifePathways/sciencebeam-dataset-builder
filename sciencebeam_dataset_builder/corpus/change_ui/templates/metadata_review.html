@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% import "macros.html" as m with context %}
+{% block content %}
+{% macro shown(value, empty) -%}
+{% if value is none %}<span class="detail">{{ empty }}</span>{% else %}{{ value }}{% endif %}
+{%- endmacro %}
+<h2>Check and review</h2>
+<p class="lead">
+  {%- if check.ok %}The correction can be proposed. Review what it changes below.
+  {%- else %}The correction cannot be proposed yet. Go back and fix what is listed.{% endif -%}
+</p>
+
+{% if document %}{{ m.document_card(document) }}{% endif %}
+
+{% if check.errors %}
+<h3>What stops it</h3>
+<ul class="errors">{% for e in check.errors %}<li>{{ e }}</li>{% endfor %}</ul>
+{% endif %}
+{% if check.warnings %}
+<h3>Worth knowing</h3>
+<ul class="warnings">{% for w in check.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+{% endif %}
+
+<form method="post" action="/corrections/metadata/submit">
+  {{ m.csrf_field() }}
+  <input type="hidden" name="uid" value="{{ uid }}">
+  <input type="hidden" name="reason" value="{{ check.reason }}">
+  {% for name, value in values.items() %}
+  <input type="hidden" name="field:{{ name }}" value="{{ value }}">
+  {% endfor %}
+  <input type="hidden" name="reviewed" value="{{ reviewed }}">
+
+  {% if rows %}
+  <h3>What changes</h3>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th scope="col">Field</th><th scope="col">Now</th><th scope="col">Corrected</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.label }}</td>
+          <td class="mono">{{ shown(r.now, "empty") }}</td>
+          <td class="mono">{{ shown(r.corrected, "cleared") }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if check.proposal %}
+  <h3>What the pull request writes</h3>
+  <section class="proposal" aria-label="{{ paths.metadata }}">
+    <header>
+      <strong>{{ paths.metadata }}</strong>
+      <p>{{ "Created with" if new_metadata else "Gains" }} this entry. Nothing else in the repo
+        changes until a release applies it.</p>
+    </header>
+    <pre class="added">{% for line in metadata_added %}+ {{ line }}
+{% endfor %}</pre>
+  </section>
+  {% endif %}
+
+  {% if not can_submit %}
+  <p class="notice">This is a preview against a local build, so submitting is switched off.</p>
+  {% endif %}
+
+  <label class="confirm">
+    <input type="checkbox" name="confirm" value="yes" {% if not check.ok %}disabled{% endif %}>
+    <span>I have reviewed this correction. Open a pull request for review. The document keeps
+      its current metadata until a release applies the change.</span>
+  </label>
+
+  <div class="actions">
+    <button class="primary" {% if not (check.ok and can_submit) %}disabled{% endif %}>
+      Open the pull request</button>
+    <span class="spacer"></span>
+    <button class="back" formaction="/corrections/metadata/find">Back</button>
+  </div>
+</form>
+{% endblock %}

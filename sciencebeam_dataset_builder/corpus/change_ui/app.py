@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from sciencebeam_dataset_builder.corpus.change_ui import corrections, removals
+from sciencebeam_dataset_builder.corpus.change_ui import corrections, metadata, removals
 from sciencebeam_dataset_builder.corpus.change_ui.pages import HERE, PageError, Pages
 from sciencebeam_dataset_builder.corpus.lookup import Repo
 
@@ -49,4 +49,5 @@ def create_app(
 
     app.include_router(removals.routes(pages, repos))
     app.include_router(corrections.routes(pages, repos))
+    app.include_router(metadata.routes(pages, repos))
     return app

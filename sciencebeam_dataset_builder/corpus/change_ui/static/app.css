@@ -149,6 +149,7 @@ textarea { min-height: 120px; resize: vertical; font-family: ui-monospace, SFMon
 textarea.reason { min-height: 64px; font-family: inherit; font-size: 15px; }
 
 .field { margin-bottom: 16px; }
+.field.spaced { margin-top: 20px; }
 .field label + .hint { margin-bottom: 6px; }
 
 /* The primary button comes first in each form, so Enter in a field submits rather than

@@ -17,6 +17,7 @@ from sciencebeam_dataset_builder.corpus.repo_reader import (
 )
 from sciencebeam_dataset_builder.corpus.validate import (
     ContentCorrectionCheck,
+    MetadataCorrectionCheck,
     RemovalCheck,
     RemovalProposal,
     open_conflicts,
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
     from huggingface_hub import HfApi
 
 TOOL_NOTE = "Proposed with the corpus change tool."
+
+CorrectionCheck = ContentCorrectionCheck | MetadataCorrectionCheck
 
 
 class ProposalError(RuntimeError):
@@ -76,11 +79,11 @@ def submit_removals(
     return Submission(reader.repo_id, info.pr_num, info.pr_url, title)
 
 
-def submit_correction(check: ContentCorrectionCheck) -> Submission:
-    """Open one pull request for a checked content correction.
+def submit_correction(check: CorrectionCheck) -> Submission:
+    """Open one pull request for a checked content or metadata correction.
 
-    A document's first correction is two commits on the one pull request - the XML as
-    harvested, then the fix - so its diff is exactly the correction.
+    A document's first content correction is two commits on the one pull request - the
+    XML as harvested, then the fix - so its diff is exactly the correction.
     """
     proposal = check.proposal
     if not check.ok or proposal is None:
@@ -88,10 +91,9 @@ def submit_correction(check: ContentCorrectionCheck) -> Submission:
     reader = _hub_reader(proposal.repo.reader, proposal.repo.repo_id)
     _recheck(reader, lambda prs: open_conflicts(proposal.id, prs, removing=False))
     paths = layout.correction_paths(proposal.id)
-    fix = {
-        paths.corrected: proposal.corrected_after.encode("utf-8"),
-        paths.metadata: proposal.metadata_after.encode("utf-8"),
-    }
+    fix = {paths.metadata: proposal.metadata_after.encode("utf-8")}
+    if proposal.corrected_after is not None:
+        fix[paths.corrected] = proposal.corrected_after.encode("utf-8")
     api = _api(reader)
     title = correction_title(check)
     description = correction_description(check)
@@ -168,54 +170,72 @@ def removal_description(
     )
 
 
-def correction_title(check: ContentCorrectionCheck) -> str:
+def correction_title(check: CorrectionCheck) -> str:
     assert check.proposal is not None
-    return f"Correct {check.proposal.id} in {_repo_name(check.proposal.repo.repo_id)}"
+    what = " metadata" if isinstance(check, MetadataCorrectionCheck) else ""
+    name = _repo_name(check.proposal.repo.repo_id)
+    return f"Correct {check.proposal.id}{what} in {name}"
 
 
-def correction_description(check: ContentCorrectionCheck) -> str:
-    """What a reviewer needs, and how to read the diff."""
+def correction_description(check: CorrectionCheck) -> str:
+    """What a reviewer needs, and how to read the change."""
     proposal, correction, where = check.proposal, check.correction, check.location
     assert proposal is not None and correction is not None and where is not None
     repo = proposal.repo
     commit = repo.reader.commit if isinstance(repo.reader, HubRepo) else ""
     paths = layout.correction_paths(proposal.id)
-    if proposal.seed is not None:
-        diff = (
-            "The first commit is the XML as harvested and the second is the fix, so "
-            "the second commit's diff is exactly the correction."
-        )
+    if isinstance(check, MetadataCorrectionCheck):
+        kept, files = "metadata", f"`{paths.metadata}`"
+        body = [
+            "| field | now | corrected |",
+            "| --- | --- | --- |",
+            *(
+                f"| {name} | {_value(check.current.get(name))} | {_value(value)} |"
+                for name, value in check.changes.items()
+            ),
+            "",
+            "**Validation:** each value has its field's form, and nothing else is "
+            "pending on `main` or open for this document.",
+        ]
     else:
-        diff = (
-            "This document has been corrected before, so the diff is against its "
-            "last proposed correction."
-        )
+        kept, files = "XML", f"`{paths.corrected}`, `{paths.metadata}`"
+        body = [
+            "The first commit is the XML as harvested and the second is the fix, so the "
+            "second commit's diff is exactly the correction."
+            if proposal.seed is not None
+            else "This document has been corrected before, so the diff is against its "
+            "last proposed correction.",
+            "",
+            "**Validation:** the XML parses, and keeps the document's root element, DOI "
+            "and licence statement. Nothing else is pending on `main` or open for this "
+            "document.",
+        ]
     return "\n".join(
         [
             f"{TOOL_NOTE} Merging records this correction on `main`; the dataset "
-            "keeps the current XML until a release applies it.",
+            f"keeps the current {kept} until a release applies it.",
             "",
-            "- **Change type:** content-corrected",
+            f"- **Change type:** {correction.change_type.value}",
             f"- **Document:** `{proposal.id}` ({where.split}, `{where.parquet_file_name}`)",
             f"- **Repo:** `{repo.repo_id}` (corpus `{repo.corpus.name}`, "
             f"{repo.tier.value})",
             f"- **Checked against:** release `{where.release}`, commit `{commit[:12]}`",
             f"- **Submitted by:** {correction.changed_by}",
             f"- **local_change_id:** {correction.local_change_id}",
-            f"- **Files changed:** `{paths.corrected}`, `{paths.metadata}`",
+            f"- **Files changed:** {files}",
             "",
             "**Reason:**",
             "",
             *(f"> {line}" for line in correction.change_reason.splitlines()),
             "",
-            diff,
-            "",
-            "**Validation:** the XML parses, and keeps the document's root element, DOI "
-            "and licence statement. Nothing else is pending on `main` or open for this "
-            "document.",
+            *body,
             *(f"\n**Warning:** {warning}" for warning in check.warnings),
         ]
     )
+
+
+def _value(value: str | None) -> str:
+    return "*empty*" if value is None else f"`{_cell(value)}`"
 
 
 def _hub_reader(reader: Any, repo_id: str) -> HubRepo:

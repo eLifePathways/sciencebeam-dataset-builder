@@ -15,6 +15,7 @@ from starlette.datastructures import FormData
 from sciencebeam_dataset_builder.corpus.change_ui.forms import MAX_DOCUMENTS, MAX_REASON
 from sciencebeam_dataset_builder.corpus.lookup import Location
 from sciencebeam_dataset_builder.corpus.proposal import ProposalError
+from sciencebeam_dataset_builder.corpus.validate import CorrectionProposal
 
 HERE = Path(__file__).parent
 
@@ -97,6 +98,15 @@ def text(value: Any) -> str:
 
 def digest(*parts: str) -> str:
     return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()
+
+
+def proposal_digest(proposal: CorrectionProposal | None) -> str:
+    """Everything a correction's pull request would write, so a change is noticed."""
+    if proposal is None:
+        return ""
+    return digest(
+        proposal.seed or "", proposal.corrected_after or "", proposal.metadata_after
+    )
 
 
 def safe_url(url: str) -> str:
