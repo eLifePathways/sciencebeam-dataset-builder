@@ -19,3 +19,14 @@
 {% macro repo(location) -%}
 {{ location.repo_name }} {{ badge(location.tier) }}
 {%- endmacro %}
+
+{% macro document_card(d) -%}
+<dl class="document">
+  <div><dt>Document</dt><dd class="mono">{{ d.uid }}</dd></div>
+  <div><dt>Repo</dt><dd>{{ repo(d) }}</dd></div>
+  <div><dt>Release</dt><dd>{{ d.release }}</dd></div>
+  <div><dt>Split and shard</dt><dd>{{ d.split }} · <span class="mono">{{ d.parquet_file_name }}</span></dd></div>
+  <div><dt>DOI</dt><dd class="mono">{{ d.doi or "none recorded" }}</dd></div>
+  <div><dt>Licence</dt><dd>{{ d.licence }}</dd></div>
+</dl>
+{%- endmacro %}

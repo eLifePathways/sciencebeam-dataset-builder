@@ -227,6 +227,28 @@ pre.added { background: var(--added-bg); color: var(--added-text); }
 details { border-top: 1px solid var(--border); }
 details summary { padding: 8px 14px; cursor: pointer; color: var(--muted); font-size: 13px; }
 
+code { font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.warnings { margin: 0; padding-left: 18px; color: var(--warn); }
+
+dl.document {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px 20px;
+  margin: 0 0 20px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+dl.document dt { color: var(--muted); font-size: 12px; }
+dl.document dd { margin: 0; overflow-wrap: anywhere; }
+
+pre.diff { max-height: 520px; border: 1px solid var(--border); border-radius: 8px; }
+pre.diff span { display: block; min-height: 1.5em; white-space: pre; }
+pre.diff .add { background: var(--added-bg); color: var(--added-text); }
+pre.diff .del { background: var(--bad-bg); color: var(--bad); }
+pre.diff .hunk { color: var(--muted); }
+
 .confirm { display: flex; gap: 10px; align-items: flex-start; margin-top: 20px; font-weight: 400; }
 .confirm input { margin-top: 4px; }
 .notice { padding: 10px 14px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); }

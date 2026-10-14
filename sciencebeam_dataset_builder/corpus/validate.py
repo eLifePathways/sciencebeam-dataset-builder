@@ -294,6 +294,16 @@ def check_content_correction(
     )
 
 
+def current_xml(location: Location) -> str:
+    """What the document reads as now: its last correction on `main`, else the XML the
+    dataset ships. The text a correction should start from."""
+    path = layout.correction_paths(location.id).corrected
+    if path in location.repo.reader.files():
+        return _read_text(location.repo, path)
+    shipped, _ = _row_xml(location)
+    return shipped
+
+
 def _load(repo: Repo) -> _Changes:
     try:
         files = set(repo.reader.files())
