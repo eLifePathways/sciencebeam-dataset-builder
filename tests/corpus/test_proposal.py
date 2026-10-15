@@ -15,7 +15,7 @@ from sciencebeam_dataset_builder.corpus.proposal import (
 from sciencebeam_dataset_builder.corpus.registry import CORPORA
 from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo
 from sciencebeam_dataset_builder.corpus.validate import check_removals
-from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_diff
+from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_change
 from tests.corpus._repos import publish, root_of
 
 BIORXIV = CORPORA["biorxiv"]
@@ -70,7 +70,7 @@ class TestSubmitRemovals:
         self, hub, repo
     ):
         checks, proposal = _checked(repo, "a")
-        hub.pull_requests = [FakePullRequest(9, "Remove z", removals_diff("z"))]
+        hub.pull_requests = [FakePullRequest(9, "Remove z", removals_change("z"))]
         with pytest.raises(ProposalError, match="#9"):
             submit_removals(proposal, checks)
         assert hub.opened == []
@@ -79,7 +79,7 @@ class TestSubmitRemovals:
         """The first pull request is now open, so the second sees it."""
         checks, proposal = _checked(repo, "a")
         submit_removals(proposal, checks)
-        hub.pull_requests = [FakePullRequest(100, "Remove a", removals_diff("a"))]
+        hub.pull_requests = [FakePullRequest(100, "Remove a", removals_change("a"))]
         with pytest.raises(ProposalError, match="#100"):
             submit_removals(proposal, checks)
         assert len(hub.opened) == 1

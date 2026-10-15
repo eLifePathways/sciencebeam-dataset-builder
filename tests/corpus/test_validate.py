@@ -10,7 +10,7 @@ from sciencebeam_dataset_builder.corpus.lookup import Repo
 from sciencebeam_dataset_builder.corpus.registry import CORPORA
 from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo
 from sciencebeam_dataset_builder.corpus.validate import check_removals
-from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_diff
+from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_change
 from tests.corpus._repos import publish, root_of, write_file
 
 BIORXIV = CORPORA["biorxiv"]
@@ -191,7 +191,7 @@ class TestOpenPullRequests:
         return Repo(BIORXIV, Tier.OPEN, HubRepo(biorxiv.repo_id))
 
     def test_a_document_already_proposed_says_where(self, hub, repo):
-        hub.pull_requests = [FakePullRequest(7, "Remove a", removals_diff("a"))]
+        hub.pull_requests = [FakePullRequest(7, "Remove a", removals_change("a"))]
         checks, proposals = check_removals([("a", REASON)], [repo], "hazal")
         assert (
             "already proposed for removal in open pull request #7"
@@ -201,26 +201,26 @@ class TestOpenPullRequests:
 
     def test_another_open_removal_pull_request_blocks_the_repo(self, hub, repo):
         """Both would edit the one removals.yml, so the second would conflict."""
-        hub.pull_requests = [FakePullRequest(7, "Remove z", removals_diff("z"))]
+        hub.pull_requests = [FakePullRequest(7, "Remove z", removals_change("z"))]
         checks, _ = check_removals([("a", REASON)], [repo], "hazal")
         assert "has to be merged or closed first" in checks[0].errors[0]
 
     def test_an_open_correction_of_the_document_blocks_its_removal(self, hub, repo):
         path = layout.correction_paths("a").metadata
-        diff = f"diff --git a/{path} b/{path}\n--- /dev/null\n+++ b/{path}\n"
-        hub.pull_requests = [FakePullRequest(8, "Correct a", diff)]
+        hub.pull_requests = [FakePullRequest(8, "Correct a", {path: b"id: a\n"})]
         checks, _ = check_removals([("a", REASON), ("b", REASON)], [repo], "hazal")
         assert "open pull request #8" in checks[0].errors[0]
         assert "changes its correction" in checks[0].errors[0]
         assert checks[1].ok
 
     def test_an_unrelated_pull_request_changes_nothing(self, hub, repo):
-        diff = "diff --git a/README.md b/README.md\n@@ -1 +1 @@\n+card\n"
-        hub.pull_requests = [FakePullRequest(9, "Card", diff)]
+        hub.pull_requests = [FakePullRequest(9, "Card", {"README.md": b"card"})]
         checks, _ = check_removals([("a", REASON)], [repo], "hazal")
         assert checks[0].ok
 
     def test_a_pull_request_that_cannot_be_read_fails_closed(self, hub, repo):
-        hub.pull_requests = [FakePullRequest(9, "?", None)]
+        hub.pull_requests = [
+            FakePullRequest(9, "?", {layout.REMOVALS_PATH: b"removals: [\n"})
+        ]
         checks, _ = check_removals([("a", REASON)], [repo], "hazal")
-        assert "no diff" in checks[0].errors[0]
+        assert "cannot be read" in checks[0].errors[0]

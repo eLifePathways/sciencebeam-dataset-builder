@@ -2,13 +2,12 @@
 
 import re
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import urlparse
 
 import pyarrow as pa
-import yaml
 
 from sciencebeam_dataset_builder.corpus import layout
 from sciencebeam_dataset_builder.corpus.change_files import (
@@ -42,7 +41,6 @@ from sciencebeam_dataset_builder.dataset.license.extract_license import (
 MAX_XML_BYTES = 20_000_000
 
 _READ_ERRORS = (OSError, pa.ArrowException, ChangeFileError, LedgerError)
-_ID_LINE = re.compile(r"^\s*(?:-\s+)?id:\s*(?P<value>.+?)\s*$")
 
 
 @dataclass(frozen=True)
@@ -510,7 +508,11 @@ def open_conflicts(
         if any(path.startswith(directory) for path in pr.files):
             errors.append(f"{where} changes its correction")
         if layout.REMOVALS_PATH in pr.files:
-            if id_value in _ids_added(pr.added[layout.REMOVALS_PATH]):
+            if pr.removal_ids is None:
+                errors.append(
+                    f"{where} changes removals.yml in a way that cannot be read"
+                )
+            elif id_value in pr.removal_ids:
                 errors.append(f"already proposed for removal in {where}")
             elif removing:
                 errors.append(
@@ -652,19 +654,6 @@ def _article_doi(root: ET.Element) -> str:
 
 def _plain_doi(doi: str) -> str:
     return re.sub(r"^https?://(dx\.)?doi\.org/", "", doi.strip().lower())
-
-
-def _ids_added(lines: Iterable[str]) -> set[str]:
-    ids = set()
-    for line in lines:
-        if match := _ID_LINE.match(line):
-            raw = match["value"]
-            try:
-                value = yaml.safe_load(raw)
-            except yaml.YAMLError:
-                value = raw
-            ids.add(value if isinstance(value, str) else raw)
-    return ids
 
 
 def _read_text(repo: Repo, path: str) -> str:

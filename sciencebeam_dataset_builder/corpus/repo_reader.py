@@ -1,7 +1,6 @@
 """Reading a corpus repo's files, wherever the repo is."""
 
-import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
@@ -11,10 +10,14 @@ from typing import TYPE_CHECKING, Protocol
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from sciencebeam_dataset_builder.corpus import layout
+from sciencebeam_dataset_builder.corpus.change_files import (
+    ChangeFileError,
+    read_removals,
+)
+
 if TYPE_CHECKING:
     from huggingface_hub import HfApi, HfFileSystem
-
-_DIFF_HEADER = re.compile(r"^diff --git a/.+ b/(?P<path>.+)$")
 
 
 class RepoReadError(OSError):
@@ -34,33 +37,14 @@ class RepoReader(Protocol):
 
 @dataclass(frozen=True)
 class PullRequest:
-    """An open pull request, and the lines it adds to each file it touches."""
+    """An open pull request: the `changes/` files it touches, and the documents it adds
+    to `removals.yml` - None where that cannot be read, so a check fails closed."""
 
     num: int
     title: str
     url: str
-    added: Mapping[str, tuple[str, ...]]
-
-    @property
-    def files(self) -> tuple[str, ...]:
-        return tuple(self.added)
-
-
-def parse_diff(diff: str) -> dict[str, tuple[str, ...]]:
-    """File -> the lines a git diff adds to it, for every file the diff touches."""
-    added: dict[str, list[str]] = {}
-    current = ""
-    in_hunk = False
-    for line in diff.splitlines():
-        if match := _DIFF_HEADER.match(line):
-            current = match["path"]
-            added.setdefault(current, [])
-            in_hunk = False
-        elif line.startswith("@@"):
-            in_hunk = True
-        elif in_hunk and current and line.startswith("+"):
-            added[current].append(line[1:])
-    return {path: tuple(lines) for path, lines in added.items()}
+    files: tuple[str, ...]
+    removal_ids: frozenset[str] | None = frozenset()
 
 
 @dataclass(frozen=True)
@@ -129,23 +113,100 @@ class HubRepo:
             return pq.read_table(f, columns=list(columns))
 
     def open_pull_requests(self) -> list[PullRequest]:
-        """As they stand now, not at `commit`: a PR opened since still conflicts."""
+        """As they stand now, not at `commit`: a PR opened since still conflicts.
+
+        What a PR changes is read by comparing its `changes/` files with the commit it
+        branched from, not from the PR's diff, which the Hub does not always send.
+        """
         found = []
         with self._errors():
             api = self._api()
+            on_main = {
+                c.commit_id
+                for c in api.list_repo_commits(
+                    self.repo_id, repo_type="dataset", revision=self.revision
+                )
+            }
             for pr in api.get_repo_discussions(
                 self.repo_id,
                 repo_type="dataset",
                 discussion_type="pull_request",
                 discussion_status="open",
             ):
-                diff = api.get_discussion_details(
-                    self.repo_id, pr.num, repo_type="dataset"
-                ).diff
-                if diff is None:
-                    raise RepoReadError(f"pull request #{pr.num} has no diff to check")
-                found.append(PullRequest(pr.num, pr.title, pr.url, parse_diff(diff)))
+                head = f"refs/pr/{pr.num}"
+                base = next(
+                    (
+                        c.commit_id
+                        for c in api.list_repo_commits(
+                            self.repo_id, repo_type="dataset", revision=head
+                        )
+                        if c.commit_id in on_main
+                    ),
+                    None,
+                )
+                if base is None:
+                    raise RepoReadError(
+                        f"pull request #{pr.num} shares no commit with {self.revision}"
+                    )
+                before, after = self._changes(api, base), self._changes(api, head)
+                files = tuple(
+                    sorted(
+                        p
+                        for p in before.keys() | after.keys()
+                        if before.get(p) != after.get(p)
+                    )
+                )
+                removal_ids = (
+                    self._removals_added(api, base, head)
+                    if layout.REMOVALS_PATH in files
+                    else frozenset()
+                )
+                found.append(PullRequest(pr.num, pr.title, pr.url, files, removal_ids))
         return found
+
+    def _changes(self, api: "HfApi", revision: str) -> dict[str, str]:
+        """Path -> blob id for every file under `changes/` at `revision`."""
+        from huggingface_hub.errors import EntryNotFoundError
+
+        try:
+            return {
+                entry.path: entry.blob_id
+                for entry in api.list_repo_tree(
+                    self.repo_id,
+                    path_in_repo=layout.CHANGES_DIRECTORY,
+                    recursive=True,
+                    revision=revision,
+                    repo_type="dataset",
+                )
+                if hasattr(entry, "blob_id")
+            }
+        except EntryNotFoundError:
+            return {}
+
+    def _removals_added(
+        self, api: "HfApi", base: str, head: str
+    ) -> frozenset[str] | None:
+        """The documents a PR adds to `removals.yml`; None when either side is unreadable."""
+        try:
+            added = self._removals_at(api, head) - self._removals_at(api, base)
+        except ChangeFileError:
+            return None
+        return frozenset(id_value for id_value, _ in added)
+
+    def _removals_at(self, api: "HfApi", revision: str) -> set[tuple[str, int]]:
+        from huggingface_hub.errors import EntryNotFoundError
+
+        try:
+            local = api.hf_hub_download(
+                self.repo_id,
+                layout.REMOVALS_PATH,
+                repo_type="dataset",
+                revision=revision,
+            )
+        except EntryNotFoundError:
+            return set()
+        text = Path(str(local)).read_text(encoding="utf-8")
+        return {(r.id, r.local_change_id) for r in read_removals(text)}
 
     def _api(self) -> "HfApi":
         from huggingface_hub import HfApi

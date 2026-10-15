@@ -6,12 +6,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from huggingface_hub.errors import EntryNotFoundError
+
 
 @dataclass
 class FakePullRequest:
+    """An open pull request: `main` with these files written over it."""
+
     num: int
     title: str
-    diff: str | None
+    files: dict[str, bytes]
 
 
 @dataclass
@@ -53,14 +57,12 @@ class FakeHub:
         self.calls.append((call, repo_id, revision))
 
 
-def removals_diff(*ids: str) -> str:
-    """What the Hub shows for a pull request adding these ids to `removals.yml`."""
-    path = "changes/removals/removals.yml"
-    added = "".join(f"+  - id: '{i}'\n+    local_change_id: 1\n" for i in ids)
-    return (
-        f"diff --git a/{path} b/{path}\n--- /dev/null\n+++ b/{path}\n"
-        f"@@ -0,0 +1,{1 + 2 * len(ids)} @@\n+removals:\n{added}"
-    )
+def removals_change(*ids: str) -> dict[str, bytes]:
+    """A pull request's files when it adds these ids to a new `removals.yml`."""
+    from sciencebeam_dataset_builder.corpus.change_files import Removal, append_removals
+
+    text = append_removals(None, [Removal(i, 1, "proposed", "someone") for i in ids])
+    return {"changes/removals/removals.yml": text.encode()}
 
 
 def _url(repo_id: str, num: int) -> str:
@@ -96,20 +98,49 @@ class _Api:
     ) -> str:
         self.hub.record("hf_hub_download", repo_id, revision)
         if revision.startswith("refs/pr/"):
-            num = int(revision.rsplit("/", 1)[1])
-            sent = next(
-                o["files"][filename]
-                for o in reversed(self.hub.opened)
-                if o["num"] == num and filename in o["files"]
-            )
+            files = self._files_at(repo_id, revision, prefix="")
+            if filename not in files:
+                raise EntryNotFoundError(f"{filename} is not at {revision}")
+            sent = files[filename]
         elif landed := self._landed(revision):
             sent = landed["files"][filename]
         else:
-            return str(self.hub.roots[repo_id] / filename)
+            path = self.hub.roots[repo_id] / filename
+            if not path.is_file():
+                raise EntryNotFoundError(f"{filename} is not at {revision}")
+            return str(path)
         local = self.hub.roots[repo_id].parent / f"served-{revision}" / filename
         local.parent.mkdir(parents=True, exist_ok=True)
         local.write_bytes(sent[:-1] if self.hub.tamper else sent)
         return str(local)
+
+    def list_repo_commits(
+        self, repo_id: str, repo_type: str, revision: str
+    ) -> list[SimpleNamespace]:
+        """`main`'s commits, newest first; a pull request adds its own on top."""
+        self.hub.record("list_repo_commits", repo_id, revision)
+        head = self.hub.commits[0]
+        main = [SimpleNamespace(commit_id=c) for c in dict.fromkeys([head, "c1"]) if c]
+        if revision.startswith("refs/pr/"):
+            return [SimpleNamespace(commit_id=f"{revision}-head"), *main]
+        return main
+
+    def list_repo_tree(
+        self,
+        repo_id: str,
+        path_in_repo: str,
+        recursive: bool,
+        revision: str,
+        repo_type: str,
+    ) -> list[SimpleNamespace]:
+        self.hub.record("list_repo_tree", repo_id, revision)
+        files = self._files_at(repo_id, revision, prefix=f"{path_in_repo}/")
+        if not files:
+            raise EntryNotFoundError(f"{path_in_repo} is not at {revision}")
+        return [
+            SimpleNamespace(path=path, blob_id=hashlib.sha1(content).hexdigest())
+            for path, content in sorted(files.items())
+        ]
 
     def get_paths_info(
         self, repo_id: str, paths: list[str], repo_type: str, revision: str
@@ -156,13 +187,6 @@ class _Api:
             SimpleNamespace(num=pr.num, title=pr.title, url=_url(repo_id, pr.num))
             for pr in self.hub.pull_requests
         )
-
-    def get_discussion_details(
-        self, repo_id: str, discussion_num: int, repo_type: str
-    ) -> SimpleNamespace:
-        self.hub.record("get_discussion_details", repo_id, str(discussion_num))
-        pr = next(p for p in self.hub.pull_requests if p.num == discussion_num)
-        return SimpleNamespace(diff=pr.diff)
 
     def create_commit(
         self,
@@ -243,6 +267,23 @@ class _Api:
             self.hub.lost_reply = False
             raise RuntimeError("timed out waiting for the reply")
         return SimpleNamespace(oid=oid, pr_num=None, pr_url=None)
+
+    def _files_at(self, repo_id: str, revision: str, prefix: str) -> dict[str, bytes]:
+        """`main`'s files under `prefix`, with a pull request's written over them."""
+        root = self.hub.roots[repo_id]
+        files = {
+            p.relative_to(root).as_posix(): p.read_bytes()
+            for p in root.rglob("*")
+            if p.is_file() and p.relative_to(root).as_posix().startswith(prefix)
+        }
+        if revision.startswith("refs/pr/"):
+            num = int(revision.rsplit("/", 1)[1])
+            fake = next((p for p in self.hub.pull_requests if p.num == num), None)
+            overlay: dict[str, bytes] = dict(fake.files) if fake else {}
+            for opened in (o for o in self.hub.opened if o["num"] == num):
+                overlay.update(opened["files"])
+            files.update({k: v for k, v in overlay.items() if k.startswith(prefix)})
+        return files
 
     def _landed(self, revision: str) -> dict[str, Any] | None:
         return next((c for c in self.hub.landed if c["oid"] == revision), None)

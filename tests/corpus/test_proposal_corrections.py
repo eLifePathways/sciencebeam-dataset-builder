@@ -111,8 +111,9 @@ class TestRefusals:
         self, hub, repo
     ):
         check = _checked(repo)
-        diff = f"diff --git a/{PATHS.corrected} b/{PATHS.corrected}\n"
-        hub.pull_requests = [FakePullRequest(4, "Correct a", diff)]
+        hub.pull_requests = [
+            FakePullRequest(4, "Correct a", {PATHS.corrected: b"<a/>"})
+        ]
         with pytest.raises(ProposalError, match="#4"):
             submit_correction(check)
         assert hub.opened == []

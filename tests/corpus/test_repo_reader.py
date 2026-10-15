@@ -5,40 +5,15 @@ import pyarrow.parquet as pq
 import pytest
 from huggingface_hub.errors import EntryNotFoundError
 
+from sciencebeam_dataset_builder.corpus import layout
 from sciencebeam_dataset_builder.corpus.repo_reader import (
     HubRepo,
     LocalRepo,
-    PullRequest,
     RepoReadError,
-    parse_diff,
 )
-from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_diff
+from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_change
 
 REPO_ID = "elifepathways/sciencebeam-dataset-biorxiv"
-
-DIFF = """\
-diff --git a/changes/removals/removals.yml b/changes/removals/removals.yml
-index 1111111..2222222 100644
---- a/changes/removals/removals.yml
-+++ b/changes/removals/removals.yml
-@@ -1,2 +1,4 @@
- removals:
-   - id: a
-+  - id: 'b'
-+    local_change_id: 1
-diff --git a/README.md b/README.md
-new file mode 100644
---- /dev/null
-+++ b/README.md
-@@ -0,0 +1 @@
-+card
-diff --git a/old.txt b/old.txt
-deleted file mode 100644
---- a/old.txt
-+++ /dev/null
-@@ -1 +0,0 @@
--gone
-"""
 
 
 class TestLocalRepo:
@@ -108,35 +83,48 @@ class TestHubRepo:
         with pytest.raises(RepoReadError, match="names no commit"):
             HubRepo(REPO_ID).files()
 
-    def test_open_pull_requests_say_what_they_add(self, hub):
-        hub.pull_requests = [FakePullRequest(7, "Remove b", removals_diff("b"))]
+    def test_an_open_pull_request_says_what_it_changes_in_changes(self, hub):
+        """Read from the PR's files against the commit it branched from, not a diff:
+        the Hub does not always send one."""
+        hub.pull_requests = [FakePullRequest(7, "Remove b", removals_change("b"))]
         [pr] = HubRepo(REPO_ID).open_pull_requests()
         assert (pr.num, pr.title) == (7, "Remove b")
         assert pr.url.endswith("/discussions/7")
-        assert pr.files == ("changes/removals/removals.yml",)
-        assert "  - id: 'b'" in pr.added["changes/removals/removals.yml"]
+        assert pr.files == (layout.REMOVALS_PATH,)
+        assert pr.removal_ids == frozenset({"b"})
 
-    def test_a_pull_request_without_a_diff_cannot_be_checked(self, hub):
-        hub.pull_requests = [FakePullRequest(7, "?", None)]
-        with pytest.raises(RepoReadError, match="no diff"):
+    def test_only_entries_the_pull_request_adds_count(self, hub, tmp_path):
+        """Entries already on main are not the PR's own."""
+        main_text = removals_change("a")[layout.REMOVALS_PATH]
+        (tmp_path / layout.REMOVALS_PATH).parent.mkdir(parents=True)
+        (tmp_path / layout.REMOVALS_PATH).write_bytes(main_text)
+        both = (
+            main_text
+            + b"  - id: b\n    local_change_id: 1\n"
+            + (b"    change_reason: proposed\n    changed_by: someone\n")
+        )
+        hub.pull_requests = [
+            FakePullRequest(8, "Remove b", {layout.REMOVALS_PATH: both})
+        ]
+        [pr] = HubRepo(REPO_ID).open_pull_requests()
+        assert pr.removal_ids == frozenset({"b"})
+
+    def test_files_outside_changes_are_not_counted(self, hub):
+        hub.pull_requests = [FakePullRequest(9, "Card", {"README.md": b"new card"})]
+        [pr] = HubRepo(REPO_ID).open_pull_requests()
+        assert pr.files == ()
+
+    def test_an_unreadable_removals_file_is_marked_unknown(self, hub):
+        """So a check that needs it fails closed."""
+        hub.pull_requests = [
+            FakePullRequest(9, "?", {layout.REMOVALS_PATH: b"removals: [\n"})
+        ]
+        [pr] = HubRepo(REPO_ID).open_pull_requests()
+        assert pr.files == (layout.REMOVALS_PATH,)
+        assert pr.removal_ids is None
+
+    def test_a_hub_failure_reading_pull_requests_is_a_repo_read_error(self, hub):
+        hub.pull_requests = [FakePullRequest(7, "Remove b", removals_change("b"))]
+        hub.fail, hub.fail_on = RuntimeError("502"), "list_repo_tree"
+        with pytest.raises(RepoReadError, match="502"):
             HubRepo(REPO_ID).open_pull_requests()
-
-
-class TestParseDiff:
-    def test_each_file_gets_the_lines_it_gains(self):
-        assert parse_diff(DIFF) == {
-            "changes/removals/removals.yml": ("  - id: 'b'", "    local_change_id: 1"),
-            "README.md": ("card",),
-            "old.txt": (),
-        }
-
-    def test_file_headers_are_not_mistaken_for_added_lines(self):
-        added = parse_diff(DIFF)["README.md"]
-        assert not any(line.startswith("++") for line in added)
-
-    def test_an_empty_diff_touches_nothing(self):
-        assert parse_diff("") == {}
-
-    def test_files_lists_every_path_touched(self):
-        pr = PullRequest(1, "t", "u", parse_diff(DIFF))
-        assert pr.files == ("changes/removals/removals.yml", "README.md", "old.txt")

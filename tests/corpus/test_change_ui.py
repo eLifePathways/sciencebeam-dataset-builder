@@ -26,7 +26,7 @@ from sciencebeam_dataset_builder.corpus.lookup import Repo
 from sciencebeam_dataset_builder.corpus.proposal import ProposalError
 from sciencebeam_dataset_builder.corpus.registry import CORPORA
 from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo
-from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_diff
+from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_change
 from tests.corpus._repos import publish, root_of, write_file
 
 BIORXIV = CORPORA["biorxiv"]
@@ -299,7 +299,7 @@ class TestSubmit:
 
     def test_a_document_that_fails_now_stops_the_submission(self, hub, client):
         data = self._reviewed(client, _request("biorxiv__a"))
-        hub.pull_requests = [FakePullRequest(7, "Remove a", removals_diff("a"))]
+        hub.pull_requests = [FakePullRequest(7, "Remove a", removals_change("a"))]
         response = _post(client, "/removals/submit", data)
         assert response.status_code == 409
         assert "open pull request #7" in response.text

@@ -16,7 +16,7 @@ from sciencebeam_dataset_builder.corpus.validate import (
     check_metadata_correction,
     current_metadata,
 )
-from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_diff
+from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_change
 from tests.corpus._repos import jats, publish, root_of, write_file
 
 BIORXIV = CORPORA["biorxiv"]
@@ -207,17 +207,18 @@ class TestOpenPullRequests:
         return Repo(BIORXIV, Tier.OPEN, HubRepo(repo.repo_id))
 
     def test_an_open_correction_of_the_document_blocks_another(self, hub, on_hub):
-        diff = f"diff --git a/{PATHS.corrected} b/{PATHS.corrected}\n"
-        hub.pull_requests = [FakePullRequest(4, "Correct a", diff)]
+        hub.pull_requests = [
+            FakePullRequest(4, "Correct a", {PATHS.corrected: b"<a/>"})
+        ]
         assert "#4" in _check(on_hub).errors[0]
 
     def test_an_open_removal_of_the_document_blocks_it(self, hub, on_hub):
-        hub.pull_requests = [FakePullRequest(5, "Remove a", removals_diff("a"))]
+        hub.pull_requests = [FakePullRequest(5, "Remove a", removals_change("a"))]
         assert "already proposed for removal" in _check(on_hub).errors[0]
 
     def test_an_open_removal_of_another_document_does_not(self, hub, on_hub):
         """Only removals share one file; a correction has its own directory."""
-        hub.pull_requests = [FakePullRequest(5, "Remove b", removals_diff("b"))]
+        hub.pull_requests = [FakePullRequest(5, "Remove b", removals_change("b"))]
         assert _check(on_hub).ok
 
 
