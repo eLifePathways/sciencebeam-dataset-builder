@@ -25,12 +25,16 @@ RELEASES_DIRECTORY = "releases"
 CHANGES_DIRECTORY = "changes"
 CORRECTIONS_DIRECTORY = f"{CHANGES_DIRECTORY}/corrections"
 REMOVALS_DIRECTORY = f"{CHANGES_DIRECTORY}/removals"
+ADDITIONS_DIRECTORY = f"{CHANGES_DIRECTORY}/additions"
 
 LEDGER_PATH = f"{RELEASES_DIRECTORY}/document-changes.csv"
 CARD_PATH = "README.md"
 
 REMOVALS_FILENAME = "removals.yml"
 REMOVALS_PATH = f"{REMOVALS_DIRECTORY}/{REMOVALS_FILENAME}"
+
+ADDITIONS_FILENAME = "additions.yml"
+ADDITIONS_PATH = f"{ADDITIONS_DIRECTORY}/{ADDITIONS_FILENAME}"
 
 # No `upstream.xml`: the first commit of `corrected.xml` is upstream, so `git log -p` on
 # that one file shows every fix as a readable diff without a second file to keep in sync.

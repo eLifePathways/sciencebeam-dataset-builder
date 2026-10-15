@@ -13,12 +13,14 @@ import pyarrow as pa
 from sciencebeam_dataset_builder.corpus import layout
 from sciencebeam_dataset_builder.corpus.change_files import (
     EDITABLE_FIELDS,
+    Addition,
     ChangeFileError,
     Correction,
     Removal,
     append_correction,
     append_removals,
     next_local_change_id,
+    read_additions,
     read_correction,
     read_removals,
 )
@@ -142,6 +144,7 @@ class _Changes:
     files: set[str] = field(default_factory=set)
     removals_text: str | None = None
     removals: list[Removal] = field(default_factory=list)
+    additions: list[Addition] = field(default_factory=list)
     ledger: list[Change] = field(default_factory=list)
     pull_requests: list[PullRequest] = field(default_factory=list)
     error: str = ""
@@ -198,7 +201,11 @@ def check_removals(
         if not draft.errors:
             repo_changes = changes[key[0]]
             local_change_id = next_local_change_id(
-                location.id, repo_changes.removals, corrections, repo_changes.ledger
+                location.id,
+                repo_changes.removals,
+                repo_changes.additions,
+                corrections,
+                repo_changes.ledger,
             )
             draft.removal = Removal(
                 location.id, local_change_id, draft.reason, changed_by
@@ -289,7 +296,11 @@ def check_content_correction(
     if not errors:
         correction = Correction(
             next_local_change_id(
-                location.id, changes.removals, corrections, changes.ledger
+                location.id,
+                changes.removals,
+                changes.additions,
+                corrections,
+                changes.ledger,
             ),
             ChangeType.CONTENT_CORRECTED,
             reason,
@@ -386,7 +397,11 @@ def check_metadata_correction(
     if not errors:
         correction = Correction(
             next_local_change_id(
-                location.id, changes.removals, corrections, changes.ledger
+                location.id,
+                changes.removals,
+                changes.additions,
+                corrections,
+                changes.ledger,
             ),
             ChangeType.METADATA_CORRECTED,
             reason,
@@ -443,6 +458,11 @@ def _load(repo: Repo) -> _Changes:
             else None
         )
         removals = read_removals(text)
+        additions = read_additions(
+            _read_text(repo, layout.ADDITIONS_PATH)
+            if layout.ADDITIONS_PATH in files
+            else None
+        )
         ledger = (
             read_ledger(repo.reader.fetch(layout.LEDGER_PATH))
             if layout.LEDGER_PATH in files
@@ -453,7 +473,7 @@ def _load(repo: Repo) -> _Changes:
         )
     except _READ_ERRORS as exc:
         return _Changes(error=f"{repo.repo_id}: {exc}")
-    return _Changes(files, text, removals, ledger, pull_requests)
+    return _Changes(files, text, removals, additions, ledger, pull_requests)
 
 
 def _removal_conflicts(
