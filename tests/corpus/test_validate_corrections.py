@@ -118,6 +118,17 @@ class TestTheUpload:
     def test_it_has_to_be_well_formed(self, repo):
         assert "not well-formed" in _check(repo, "<article>").errors[0]
 
+    def test_it_may_not_bring_in_an_entity_the_current_version_lacks(self, repo):
+        errors = _check(repo, jats(title="New 10&deg;")).errors
+        assert "undefined entity" in errors[0]
+
+    def test_writing_a_character_as_a_reference_is_no_correction(self, tmp_path):
+        repo = publish(
+            tmp_path, BIORXIV, Tier.OPEN, {"train": ["a"]}, xml={"a": jats(title="10°")}
+        )
+        errors = _check(repo, jats(title="10&#176;")).errors
+        assert "the only change is how characters are written" in errors[0]
+
     def test_it_has_to_be_utf8(self, repo):
         assert "not UTF-8" in _check(repo, b"\xff\xfe<").errors[0]
 
@@ -150,6 +161,38 @@ class TestTheUpload:
     def test_a_different_root_element_is_refused(self, repo):
         errors = _check(repo, FIXED.replace("article", "book")).errors
         assert any("root element is <book>" in e for e in errors)
+
+
+class TestAnEntityTheOriginalAlreadyHas:
+    """`&deg;` is undefined in XML; some published JATS carries it all the same."""
+
+    @pytest.fixture
+    def original(self) -> str:
+        return jats(title="Heated to 10&deg;")
+
+    @pytest.fixture
+    def repo(self, tmp_path, original):
+        return publish(
+            tmp_path, BIORXIV, Tier.OPEN, {"train": ["a"]}, xml={"a": original}
+        )
+
+    def test_kept_alongside_a_real_change_it_is_accepted_with_a_warning(
+        self, repo, original
+    ):
+        check = _check(repo, original.replace("Heated", "Warmed"))
+        assert check.ok
+        assert "not well-formed" in check.warnings[0]
+
+    @pytest.mark.parametrize("written", ["°", "&#176;", "&#xB0;"])
+    def test_changing_only_how_it_is_written_is_refused(self, repo, original, written):
+        errors = _check(repo, original.replace("&deg;", written)).errors
+        assert "the only change is how characters are written" in errors[0]
+
+    def test_an_unchanged_upload_is_refused(self, repo, original):
+        assert "same as the current version" in _check(repo, original).errors[0]
+
+    def test_it_still_cannot_be_broken_further(self, repo):
+        assert "not well-formed" in _check(repo, "<article>").errors[0]
 
 
 class TestWhatElseIsGoingOn:

@@ -1,5 +1,6 @@
 """Checking requested changes document by document, before anything is proposed."""
 
+import html
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Mapping, Sequence
@@ -41,6 +42,8 @@ from sciencebeam_dataset_builder.dataset.license.extract_license import (
 MAX_XML_BYTES = 20_000_000
 
 _READ_ERRORS = (OSError, pa.ArrowException, ChangeFileError, LedgerError)
+_ENTITY = re.compile(r"&(#[0-9]+|#x[0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);")
+_XML_ENTITIES = frozenset({"amp", "lt", "gt", "quot", "apos"})
 
 
 @dataclass(frozen=True)
@@ -548,15 +551,28 @@ def _check_xml(
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         return "", [f"the XML is not UTF-8 text: {exc}"], []
+    errors: list[str] = []
+    warnings: list[str] = []
     try:
         root = ET.fromstring(text)
     except ET.ParseError as exc:
-        return text, [f"the XML is not well-formed: {exc}"], []
+        # An entity XML does not define, such as `&deg;`, may stay where the current
+        # version already has it: a fix should not have to repair what it did not break.
+        repaired = parse_xml(text)
+        if repaired is None or _parses_strictly(current):
+            return text, [f"the XML is not well-formed: {exc}"], []
+        root = repaired
+        warnings.append(
+            f"the XML is not well-formed ({exc}), as the current version is not either"
+        )
 
-    errors: list[str] = []
-    warnings: list[str] = []
     if text == current:
         errors.append("the XML is the same as the current version")
+    elif _characters(text) == _characters(current):
+        errors.append(
+            "the only change is how characters are written, such as &deg; for °; "
+            "that is not a correction"
+        )
     was = parse_xml(current)
     if was is not None and _local_name(root) != _local_name(was):
         errors.append(
@@ -639,6 +655,21 @@ def _is_timestamp(value: str) -> bool:
     except ValueError:
         return False
     return "T" in value and parsed.tzinfo is not None
+
+
+def _parses_strictly(xml: str) -> bool:
+    try:
+        ET.fromstring(xml)
+    except ET.ParseError:
+        return False
+    return True
+
+
+def _characters(xml: str) -> str:
+    """The text with every entity but XML's own five written as its character."""
+    return _ENTITY.sub(
+        lambda m: m[0] if m[1] in _XML_ENTITIES else html.unescape(m[0]), xml
+    )
 
 
 def _local_name(element: ET.Element) -> str:
