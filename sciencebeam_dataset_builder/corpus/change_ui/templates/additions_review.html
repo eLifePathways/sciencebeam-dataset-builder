@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% import "macros.html" as m with context %}
+{% block content %}
+<h2>Checks and next step</h2>
+<p class="lead">{{ passed }} of {{ checks | length }} documents can be added. Nothing is
+  proposed from here: run the build below where the snapshot is, check its output, then
+  upload it.</p>
+
+<div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Document</th>
+        <th scope="col">Result</th>
+        <th scope="col">Split</th>
+        <th scope="col">Licence</th>
+        <th scope="col">Goes to</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in checks %}
+      <tr>
+        <td class="mono">{{ c.uid or c.query }}</td>
+        <td>
+          {% if c.ok %}{{ m.badge("ok", "Can be added") }}{% else %}{{ m.badge("error", "Cannot be added") }}{% endif %}
+          {% if c.errors %}<ul class="errors">{% for e in c.errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+          {% if c.warnings %}<ul class="warnings">{% for w in c.warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}
+        </td>
+        <td>{{ c.split }}</td>
+        <td>{{ c.licence or "never recorded" }}</td>
+        <td class="mono">{{ c.repo_id }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% for p in plans %}
+<section class="proposal" aria-label="Build for {{ p.repo_id }}">
+  <header>
+    <strong>{{ p.repo_id }}</strong> {{ m.badge(p.tier.value) }}
+    <p>Adds {{ p.requested | length }} of these on top of {{ p.base_release }} as
+      {{ p.version }}, in a new shard after the existing ones, so no document already
+      published moves.</p>
+  </header>
+  <pre>{{ p.command }}</pre>
+  {% if p.also_added %}
+  <details>
+    <summary>The build also adds {{ p.also_added | length }} other new document{{ '' if p.also_added | length == 1 else 's' }}
+      from the snapshot that route here</summary>
+    <pre>{% for id in p.also_added[:max_listed] %}{{ id }}
+{% endfor %}{% if p.also_added | length > max_listed %}… and {{ p.also_added | length - max_listed }} more
+{% endif %}</pre>
+  </details>
+  {% endif %}
+</section>
+{% endfor %}
+
+<div class="actions">
+  <a class="button primary" href="/">Start a new request</a>
+  <span class="spacer"></span>
+  <a class="button back" href="/additions">Back</a>
+</div>
+{% endblock %}
