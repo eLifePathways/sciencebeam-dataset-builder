@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% import "macros.html" as m with context %}
+{% block content %}
+<h2>Which document?</h2>
+<p class="lead">Give the id of the document whose {{ what }} you are correcting. It can be
+  bare, or carry its source, like biorxiv__10.1101_2022.01.01.000000.</p>
+
+<form method="post" action="{{ action }}">
+  {{ m.csrf_field() }}
+  <div class="field">
+    <label for="uid">Document id</label>
+    <input type="text" id="uid" name="uid" value="{{ uid }}" spellcheck="false" required>
+  </div>
+  <div class="actions">
+    <button class="primary">Find the document</button>
+    <span class="spacer"></span>
+    <a class="button back" href="/">Back</a>
+  </div>
+</form>
+{% endblock %}

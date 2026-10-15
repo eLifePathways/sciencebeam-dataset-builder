@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% import "macros.html" as m with context %}
+{% block content %}
+<h2>Which documents to add?</h2>
+<p class="lead">A document is added from the source snapshot by the corpus build, not by a pull
+  request. This checks that the build would add it, says which repo its licence puts it in
+  and which split the snapshot gives it, and gives the command to run.</p>
+
+{% if inputs is none %}
+<p class="notice">Adding needs the source snapshot and the licence report, which are only on
+  the machine that builds the corpora. Start this page there, with <code>--data-dir</code>
+  and <code>--licence-report</code> if they are not in their usual places.</p>
+{% else %}
+<form method="post" action="/additions/check">
+  {{ m.csrf_field() }}
+  <div class="field">
+    <label for="corpus">Corpus</label>
+    <span class="hint" id="corpus-hint">The corpus the documents come from. Each one's
+      licence decides which of its repos it goes to.</span>
+    <select id="corpus" name="corpus" required aria-describedby="corpus-hint">
+      <option value="">Choose a corpus</option>
+      {% for c in corpora %}
+      <option value="{{ c.name }}"{% if c.name == corpus %} selected{% endif %}>{{ c.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="ids">Document ids</label>
+    <span class="hint" id="ids-hint">As in the snapshot, like 10.1101_2022.01.01.000000;
+      <code>&lt;source&gt;__&lt;id&gt;</code> works too. Up to {{ max_documents }},
+      separated by new lines, spaces or commas.</span>
+    <textarea id="ids" name="ids" spellcheck="false" aria-describedby="ids-hint">{{ ids }}</textarea>
+  </div>
+  <div class="actions">
+    <button class="primary">Check these documents</button>
+    <span class="spacer"></span>
+    <a class="button back" href="/">Back</a>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

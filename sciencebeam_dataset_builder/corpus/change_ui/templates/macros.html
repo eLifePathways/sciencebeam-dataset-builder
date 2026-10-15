@@ -1,0 +1,32 @@
+{% macro csrf_field() -%}
+<input type="hidden" name="csrf" value="{{ csrf }}">
+{%- endmacro %}
+
+{# The request so far. A hidden textarea keeps the line breaks an input would drop. #}
+{% macro carry(draft, reasons=true) -%}
+<textarea name="ids" hidden>{{ draft.ids }}</textarea>
+{% for uid in draft.uids %}
+<input type="hidden" name="uid" value="{{ uid }}">
+{% if reasons %}<input type="hidden" name="own:{{ uid }}" value="{{ draft.own[uid] }}">{% endif %}
+{% endfor %}
+{% if reasons %}<input type="hidden" name="shared" value="{{ draft.shared }}">{% endif %}
+{%- endmacro %}
+
+{% macro badge(kind, text=none) -%}
+<span class="badge {{ kind }}">{{ text or kind }}</span>
+{%- endmacro %}
+
+{% macro repo(location) -%}
+{{ location.repo_name }} {{ badge(location.tier) }}
+{%- endmacro %}
+
+{% macro document_card(d) -%}
+<dl class="document">
+  <div><dt>Document</dt><dd class="mono">{{ d.uid }}</dd></div>
+  <div><dt>Repo</dt><dd>{{ repo(d) }}</dd></div>
+  <div><dt>Release</dt><dd>{{ d.release }}</dd></div>
+  <div><dt>Split and shard</dt><dd>{{ d.split }} · <span class="mono">{{ d.parquet_file_name }}</span></dd></div>
+  <div><dt>DOI</dt><dd class="mono">{{ d.doi or "none recorded" }}</dd></div>
+  <div><dt>Licence</dt><dd>{{ d.licence }}</dd></div>
+</dl>
+{%- endmacro %}

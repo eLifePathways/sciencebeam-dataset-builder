@@ -37,7 +37,8 @@ LICENCE_REPORTS_DIR ?= ./sciencebeam_dataset_builder/dataset/license/reports
 	remove-dry-run remove verify-removal remove-upload \
 	licence-audit \
 	archive-cut archive-cut-render archive-cut-publish \
-	corpus-create-repo corpus-create-all-repos corpus-build corpus-build-upload
+	corpus-create-repo corpus-create-all-repos corpus-build corpus-build-upload \
+	change-ui corpus-change
 
 install:
 	uv sync --frozen
@@ -200,3 +201,15 @@ corpus-build:
 corpus-build-upload:
 	uv run -m sciencebeam_dataset_builder.corpus.build_cli \
 		--corpus $(CORPUS) --tier $(TIER) --data-dir $(DATA_DIR) --upload $(RUN_ARGS)
+
+# The change request page on http://127.0.0.1:8765, proposing changes as Hub pull
+# requests with HF_TOKEN or the saved login. RUN_ARGS="--local-dir $(OUTPUT_DIR)/corpus-build"
+# previews against the local build instead, with submitting switched off.
+change-ui:
+	uv run -m sciencebeam_dataset_builder.corpus.change_ui $(RUN_ARGS)
+
+# What one corpus/tier has merged but not released, and the version it needs.
+# RUN_ARGS="--version v2.0.0" writes that release locally, for checking before upload.
+corpus-change:
+	uv run -m sciencebeam_dataset_builder.corpus.change_cli \
+		--corpus $(CORPUS) --tier $(TIER) $(RUN_ARGS)

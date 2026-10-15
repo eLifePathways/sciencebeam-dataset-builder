@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Corpus change requests</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <h1><a href="/">Corpus change requests</a></h1>
+      <p class="who">
+        {%- if not user %}Not signed in
+        {%- elif can_submit %}Signed in to Hugging Face as {{ user }}
+        {%- else %}Previewing a local build as {{ user }}{% endif -%}
+      </p>
+    </div>
+  </header>
+  <main class="wrap">
+    {% if step_index >= 0 %}
+    <ol class="steps" aria-label="Progress">
+      {% for key, title in steps %}
+      <li class="{{ 'current' if loop.index0 == step_index else ('past' if loop.index0 < step_index else '') }}"
+          {%- if loop.index0 == step_index %} aria-current="step"{% endif %}>{{ title }}</li>
+      {% endfor %}
+    </ol>
+    {% endif %}
+    {% block banner %}
+    {% if error %}<div class="banner" role="alert">{{ error }}</div>{% endif %}
+    {% endblock %}
+    <section class="card">
+      {% block content %}{% endblock %}
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% import "macros.html" as m with context %}
+{% block content %}
+<h2>Upload the corrected XML</h2>
+<p class="lead">Once a release applies it, your file becomes the document's XML. The XML it
+  ships now stays available beside it as <code>xml_upstream</code>.</p>
+
+{{ m.document_card(document) }}
+
+<form method="post" action="/corrections/content/check" enctype="multipart/form-data">
+  {{ m.csrf_field() }}
+  <input type="hidden" name="uid" value="{{ uid }}">
+  <div class="field">
+    <label for="xml">Corrected XML</label>
+    <span class="hint" id="xml-hint">The whole document, as UTF-8.
+      <a href="/corrections/content/current?uid={{ uid | urlencode }}">Download its current XML</a>,
+      fix that file and upload it here, so the difference is only your fix.</span>
+    <input type="file" id="xml" name="xml" accept=".xml,application/xml,text/xml"
+           aria-describedby="xml-hint" required>
+  </div>
+  <div class="field">
+    <label for="reason">Reason for the correction</label>
+    <span class="hint" id="reason-hint">Recorded with the change and shown to the reviewer.</span>
+    <textarea id="reason" name="reason" class="reason" maxlength="{{ max_reason }}"
+              aria-describedby="reason-hint" required>{{ reason }}</textarea>
+  </div>
+  <div class="actions">
+    <button class="primary">Check the correction</button>
+    <span class="spacer"></span>
+    <a class="button back" href="/corrections/content">Back</a>
+  </div>
+</form>
+{% endblock %}

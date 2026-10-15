@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>What do you want to change?</h2>
+<p class="lead">Each request opens a pull request on the dataset repo for someone to review.
+  Nothing in the published dataset changes until a release applies it.</p>
+<ul class="choices">
+  <li class="choice">
+    <h3>Remove documents</h3>
+    <p>Take documents out of a corpus at its next release.</p>
+    <a class="button primary" href="/removals">Start</a>
+  </li>
+  <li class="choice">
+    <h3>Add documents</h3>
+    <p>Check documents from the source snapshot and get the build that adds them.</p>
+    <a class="button primary" href="/additions">Start</a>
+  </li>
+  <li class="choice">
+    <h3>Correct content</h3>
+    <p>Replace a document's XML with a corrected version.</p>
+    <a class="button primary" href="/corrections/content">Start</a>
+  </li>
+  <li class="choice">
+    <h3>Correct metadata</h3>
+    <p>Fix a DOI, a date, a version or a source URL.</p>
+    <a class="button primary" href="/corrections/metadata">Start</a>
+  </li>
+</ul>
+{% endblock %}
