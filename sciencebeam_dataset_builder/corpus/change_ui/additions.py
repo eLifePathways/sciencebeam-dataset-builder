@@ -21,6 +21,7 @@ from sciencebeam_dataset_builder.corpus.change_ui.forms import (
 )
 from sciencebeam_dataset_builder.corpus.change_ui.pages import Pages, Steps, text
 from sciencebeam_dataset_builder.corpus.lookup import Repo
+from sciencebeam_dataset_builder.corpus.registry import CORPORA, Corpus
 
 STEPS: Steps = (
     ("type", "Change type"),
@@ -40,13 +41,20 @@ def routes(
     router = APIRouter(prefix="/additions")
 
     def documents_page(
-        request: Request, ids: str, *, error: str = "", status_code: int = 200
+        request: Request,
+        corpus: str,
+        ids: str,
+        *,
+        error: str = "",
+        status_code: int = 200,
     ) -> HTMLResponse:
         return pages.render(
             request,
             "additions_documents.html",
             STEPS,
             "documents",
+            corpora=CORPORA.values(),
+            corpus=corpus,
             ids=ids,
             inputs=inputs,
             error=error,
@@ -55,22 +63,23 @@ def routes(
 
     @router.get("")
     def documents(request: Request) -> HTMLResponse:
-        return documents_page(request, "")
+        return documents_page(request, "", "")
 
     @router.post("/check")
     async def check(request: Request) -> HTMLResponse:
         data = await pages.form(request)
-        ids = text(data.get("ids"))
+        name, ids = text(data.get("corpus")), text(data.get("ids"))
         if inputs is None:
-            return documents_page(request, ids, status_code=409)
+            return documents_page(request, name, ids, status_code=409)
         try:
+            corpus = _corpus(name)
             queries = parse_ids(ids)
             check_count(queries)
             checks, plans = await run_in_threadpool(
-                check_additions, queries, repos(), inputs
+                check_additions, corpus, queries, repos(), inputs
             )
         except (FormError, AdditionError) as exc:
-            return documents_page(request, ids, error=str(exc), status_code=400)
+            return documents_page(request, name, ids, error=str(exc), status_code=400)
         return pages.render(
             request,
             "additions_review.html",
@@ -84,3 +93,9 @@ def routes(
         )
 
     return router
+
+
+def _corpus(name: str) -> Corpus:
+    if name not in CORPORA:
+        raise FormError("Choose the corpus the documents come from.")
+    return CORPORA[name]

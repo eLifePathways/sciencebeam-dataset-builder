@@ -91,42 +91,29 @@ class AdditionPlan:
 
 
 def check_additions(
-    queries: Sequence[str], repos: Sequence[Repo], inputs: BuildInputs
+    corpus: Corpus, queries: Sequence[str], repos: Sequence[Repo], inputs: BuildInputs
 ) -> tuple[list[AdditionCheck], list[AdditionPlan]]:
-    """Check each `<source>__<id>`; plan one build per repo the ones that pass land in."""
+    """Check each of `corpus`'s ids; plan one build per repo the ones that pass land in."""
     try:
         snapshot = latest_snapshot(inputs.data_dir)
         licences = read_licences(inputs.licence_report)
     except (AuditError, OSError, ValueError) as exc:
         raise AdditionError(str(exc)) from exc
     by_repo = {repo.repo_id: repo for repo in repos}
-    in_snapshot: dict[str, dict[str, str]] = {}
+    in_snapshot = _snapshot_splits(snapshot, corpus)
     members: dict[str, set[str]] = {}
     seen: set[str] = set()
     checks = []
     wanted: dict[str, list[str]] = {}
 
-    for query, result in zip(queries, lookup(queries, repos), strict=True):
-        try:
-            corpus, id_value = parse_query(query)
-        except QueryError as exc:
-            checks.append(AdditionCheck(query, "", "", "", "", (str(exc),)))
+    parsed = [_id_in(corpus, query) for query in queries]
+    uids = [f"{corpus.source}__{id_value}" for id_value, error in parsed if not error]
+    results = iter(lookup(uids, repos))
+    for query, (id_value, error) in zip(queries, parsed, strict=True):
+        if error:
+            checks.append(AdditionCheck(query, "", "", "", "", (error,)))
             continue
-        if corpus is None:
-            checks.append(
-                AdditionCheck(
-                    query,
-                    "",
-                    "",
-                    "",
-                    "",
-                    (
-                        "give it as <source>__<id>: a document not yet added has no repo "
-                        "to tell its corpus from",
-                    ),
-                )
-            )
-            continue
+        result = next(results)
         uid = f"{corpus.source}__{id_value}"
         errors: list[str] = []
         warnings: list[str] = []
@@ -142,9 +129,7 @@ def check_additions(
         elif result.status is not Status.MISSING:
             errors.append(f"{result.status.value}: {result.detail}")
 
-        if corpus.name not in in_snapshot:
-            in_snapshot[corpus.name] = _snapshot_splits(snapshot, corpus)
-        split = in_snapshot[corpus.name].get(id_value, "")
+        split = in_snapshot.get(id_value, "")
         if not split:
             errors.append(
                 f"not in the snapshot {snapshot.name}; it has to be harvested before it "
@@ -199,8 +184,8 @@ def check_additions(
             raise AdditionError(f"{repo_id} has no release to add to")
         routed = {
             id_value
-            for id_value in in_snapshot[repo.corpus.name]
-            if route(f"{repo.corpus.source}__{id_value}", licences).tier is repo.tier
+            for id_value in in_snapshot
+            if route(f"{corpus.source}__{id_value}", licences).tier is repo.tier
         }
         also = sorted(routed - members[repo_id] - set(ids))
         plans.append(
@@ -215,6 +200,17 @@ def check_additions(
             )
         )
     return checks, plans
+
+
+def _id_in(corpus: Corpus, query: str) -> tuple[str, str]:
+    """The id, bare or as `<source>__<id>`, or why `query` names none in `corpus`."""
+    try:
+        named, id_value = parse_query(query)
+    except QueryError as exc:
+        return "", str(exc)
+    if named is not None and named != corpus:
+        return "", f"names the {named.name} corpus, not {corpus.name}"
+    return id_value, ""
 
 
 def _snapshot_splits(snapshot: Path, corpus: Corpus) -> dict[str, str]:

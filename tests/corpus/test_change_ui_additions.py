@@ -39,7 +39,7 @@ def test_without_the_snapshot_the_page_says_where_to_run_it(tmp_path):
 
 
 def test_the_checks_end_in_the_build_to_run(client):
-    page = _post(client, "/additions/check", {"ids": "biorxiv__n1 biorxiv__a"}).text
+    page = _post(client, "/additions/check", {"corpus": "biorxiv", "ids": "n1 a"}).text
     assert "1 of 2 documents can be added" in page
     assert "make corpus-build CORPUS=biorxiv TIER=open" in page
     assert "--base-release v1.0.0 --version v1.1.0" in page
@@ -48,6 +48,14 @@ def test_the_checks_end_in_the_build_to_run(client):
 
 
 def test_no_ids_is_refused_with_the_form_kept(client):
-    response = _post(client, "/additions/check", {"ids": " "})
+    response = _post(client, "/additions/check", {"corpus": "biorxiv", "ids": " "})
     assert response.status_code == 400
     assert "Enter at least one document id" in response.text
+    assert 'value="biorxiv" selected' in response.text
+
+
+def test_no_corpus_is_refused_with_the_ids_kept(client):
+    response = _post(client, "/additions/check", {"corpus": "", "ids": "n1"})
+    assert response.status_code == 400
+    assert "Choose the corpus the documents come from" in response.text
+    assert ">n1</textarea>" in response.text
