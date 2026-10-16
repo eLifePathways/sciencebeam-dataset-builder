@@ -40,6 +40,8 @@ class FakeHub:
     tamper: bool = False
     user: str | None = "hazal"
     calls: list[tuple[str, str, str]] = field(default_factory=list)
+    # Pull request number -> the title it was renamed to.
+    renamed: dict[int, str] = field(default_factory=dict)
 
     def install(self, monkeypatch: Any) -> None:
         monkeypatch.setattr("huggingface_hub.HfApi", lambda token=None: _Api(self))
@@ -246,6 +248,12 @@ class _Api:
             }
         )
         return SimpleNamespace(pr_num=num, pr_url=_url(repo_id, num), oid=oid)
+
+    def rename_discussion(
+        self, repo_id: str, discussion_num: int, new_title: str, *, repo_type: str
+    ) -> None:
+        self.hub.record("rename_discussion", repo_id, str(discussion_num))
+        self.hub.renamed[discussion_num] = new_title
 
     def whoami(self) -> dict[str, Any]:
         self.hub.record("whoami", "", "")

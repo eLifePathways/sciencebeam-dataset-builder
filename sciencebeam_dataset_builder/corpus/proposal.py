@@ -151,6 +151,8 @@ def submit_correction(check: CorrectionCheck) -> Submission:
                 f"failed: {exc}. Close it and submit again."
             ) from exc
     _verify(api, reader.repo_id, info, fix)
+    if proposal.seed is not None:
+        _retitle(api, reader.repo_id, info, title)
     return Submission(reader.repo_id, info.pr_num, info.pr_url, title)
 
 
@@ -443,6 +445,18 @@ def _open(
     if info.pr_num is None or not info.pr_url:
         raise ProposalError("the Hub made a commit but opened no pull request")
     return info
+
+
+def _retitle(api: "HfApi", repo_id: str, info: Any, title: str) -> None:
+    """A pull request takes its first commit's message as its title, and a first
+    correction's first commit is the XML as harvested."""
+    try:
+        api.rename_discussion(repo_id, info.pr_num, title, repo_type="dataset")
+    except Exception as exc:  # noqa: BLE001 - Hub calls fail in varied ways
+        raise ProposalError(
+            f"opened {info.pr_url} with the original XML and the fix, but could not "
+            f"rename it to {title!r}: {exc}. Rename it on the Hub."
+        ) from exc
 
 
 def _verify(api: "HfApi", repo_id: str, info: Any, sent: Mapping[str, bytes]) -> None:
