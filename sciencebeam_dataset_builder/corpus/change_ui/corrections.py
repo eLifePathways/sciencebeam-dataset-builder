@@ -6,7 +6,6 @@ rewrites the line breaks of any text field it posts, which would change the file
 
 import base64
 import binascii
-import difflib
 from collections.abc import Callable, Sequence
 
 from fastapi import APIRouter, Request
@@ -28,6 +27,7 @@ from sciencebeam_dataset_builder.corpus.lookup import Location, Repo, Status, lo
 from sciencebeam_dataset_builder.corpus.proposal import (
     ProposalError,
     submit_correction,
+    xml_diff,
 )
 from sciencebeam_dataset_builder.corpus.validate import (
     MAX_XML_BYTES,
@@ -271,21 +271,9 @@ def routes(pages: Pages, repos: Callable[[], Sequence[Repo]]) -> APIRouter:
 
 
 def _diff(before: str, after: str) -> tuple[list[tuple[str, str]], bool]:
-    """Unified diff lines with their kind, for the page to colour.
-
-    Lines are broken between adjacent tags first, so a JATS file held on one line still
-    shows what moved rather than one line removed and one added.
-    """
-    lines: list[tuple[str, str]] = []
-    for line in difflib.unified_diff(
-        _tag_lines(before), _tag_lines(after), "current", "corrected", lineterm=""
-    ):
-        if line.startswith(("---", "+++")):
-            continue
-        kind = {"+": "add", "-": "del", "@": "hunk"}.get(line[:1], "same")
-        lines.append((kind, line))
+    """Unified diff lines with their kind, for the page to colour."""
+    lines = [
+        ({"+": "add", "-": "del", "@": "hunk"}.get(line[:1], "same"), line)
+        for line in xml_diff(before, after)
+    ]
     return lines[:MAX_DIFF_LINES], len(lines) > MAX_DIFF_LINES
-
-
-def _tag_lines(xml: str) -> list[str]:
-    return xml.replace("><", ">\n<").splitlines()

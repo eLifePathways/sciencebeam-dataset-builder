@@ -2,7 +2,7 @@
 
 import pytest
 
-from sciencebeam_dataset_builder.corpus import layout
+from sciencebeam_dataset_builder.corpus import layout, proposal
 from sciencebeam_dataset_builder.corpus.change_files import read_correction
 from sciencebeam_dataset_builder.corpus.layout import Tier
 from sciencebeam_dataset_builder.corpus.lookup import Repo
@@ -81,6 +81,18 @@ class TestAFirstCorrection:
         assert "**local_change_id:** 1" in text
         assert f"`{PATHS.corrected}`, `{PATHS.metadata}`" in text
 
+    def test_the_description_shows_the_fix_the_files_view_cannot(self, hub, repo):
+        """The pull request adds corrected.xml whole, so its own diff is the file."""
+        text = correction_description(_checked(repo))
+        assert "```diff\n" in text
+        assert "\n-<article-title>Old title</article-title>\n" in text
+        assert "\n+<article-title>New title</article-title>\n" in text
+
+    def test_a_long_diff_is_cut_short_and_says_so(self, hub, repo, monkeypatch):
+        monkeypatch.setattr(proposal, "MAX_DESCRIPTION_DIFF", 40)
+        text = correction_description(_checked(repo))
+        assert "not shown: see the commit's diff" in text
+
 
 class TestALaterCorrection:
     def test_it_is_one_commit_with_both_files(self, local, hub, repo):
@@ -97,6 +109,8 @@ class TestALaterCorrection:
         [only] = hub.opened
         assert set(only["files"]) == {PATHS.corrected, PATHS.metadata}
         assert "diff is against its last proposed correction" in only["description"]
+        assert "\n-<article-title>New title</article-title>" in only["description"]
+        assert "\n+<article-title>Newer title</article-title>" in only["description"]
 
 
 class TestRefusals:

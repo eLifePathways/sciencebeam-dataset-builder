@@ -34,7 +34,7 @@ def create_app(
     open_from: OpenFrom = hub_from,
 ) -> FastAPI:
     app = FastAPI(
-        title="Corpus change requests",
+        title="ScienceBeam Dataset Change UI",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,

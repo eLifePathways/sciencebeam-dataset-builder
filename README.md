@@ -218,10 +218,11 @@ reviewed pull requests on the repo itself, which touch `changes/` and nothing el
 repository is public, so no change file, verdict or document content is committed here.
 
 ```sh
-make change-ui    # http://127.0.0.1:8765, with HF_TOKEN or the saved login
+make change-ui    # the ScienceBeam Dataset Change UI, at http://127.0.0.1:8765
 ```
 
-The page proposes four kinds of change, each as a Hub pull request:
+It runs with `HF_TOKEN` or the saved Hub login, whose user is recorded as `changed_by`, and
+proposes four kinds of change, each as a Hub pull request:
 
 | change | file | release |
 | --- | --- | --- |

@@ -203,7 +203,7 @@ corpus-build-upload:
 	uv run -m sciencebeam_dataset_builder.corpus.build_cli \
 		--corpus $(CORPUS) --tier $(TIER) --data-dir $(DATA_DIR) --upload $(RUN_ARGS)
 
-# The change request page on http://127.0.0.1:8765, proposing changes as Hub pull
+# The ScienceBeam Dataset Change UI on http://127.0.0.1:8765, proposing changes as Hub pull
 # requests with HF_TOKEN or the saved login. RUN_ARGS="--local-dir $(OUTPUT_DIR)/corpus-build"
 # previews against the local build instead, with submitting switched off.
 change-ui:
