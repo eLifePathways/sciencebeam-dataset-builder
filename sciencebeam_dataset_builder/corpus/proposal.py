@@ -4,6 +4,7 @@ A pull request only adds to `changes/`; nothing published changes until a releas
 applies it.
 """
 
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,10 @@ from sciencebeam_dataset_builder.corpus.validate import (
     RemovalCheck,
     RemovalProposal,
     open_conflicts,
+)
+from sciencebeam_dataset_builder.corpus.validate_additions import (
+    AdditionCheck,
+    AdditionProposal,
 )
 
 if TYPE_CHECKING:
@@ -75,6 +80,27 @@ def submit_removals(
     title = removal_title(proposal)
     files = {layout.REMOVALS_PATH: proposal.after.encode("utf-8")}
     info = _open(api, reader, files, title, removal_description(proposal, checks))
+    _verify(api, reader.repo_id, info, files)
+    return Submission(reader.repo_id, info.pr_num, info.pr_url, title)
+
+
+def submit_additions(
+    proposal: AdditionProposal, checks: Sequence[AdditionCheck]
+) -> Submission:
+    """Open one pull request adding `proposal`'s entries to `additions.yml`."""
+    reader = _hub_reader(proposal.repo.reader, proposal.repo.repo_id)
+    _recheck(
+        reader,
+        lambda prs: [
+            f"pull request #{pr.num} ({pr.url}) now proposes additions here"
+            for pr in prs
+            if layout.ADDITIONS_PATH in pr.files
+        ],
+    )
+    api = _api(reader)
+    title = addition_title(proposal)
+    files = {layout.ADDITIONS_PATH: proposal.after.encode("utf-8")}
+    info = _open(api, reader, files, title, addition_description(proposal, checks))
     _verify(api, reader.repo_id, info, files)
     return Submission(reader.repo_id, info.pr_num, info.pr_url, title)
 
@@ -166,6 +192,67 @@ def removal_description(
             "",
             f"**Validation:** all {len(rows)} passed. Each is in release `{release}` "
             "and has no other change pending on `main` or in an open pull request.",
+        ]
+    )
+
+
+def addition_title(proposal: AdditionProposal) -> str:
+    name = _repo_name(proposal.repo.repo_id)
+    if len(proposal.additions) == 1:
+        return f"Add {proposal.additions[0].id} to {name}"
+    return f"Add {len(proposal.additions)} documents to {name}"
+
+
+def addition_description(
+    proposal: AdditionProposal, checks: Sequence[AdditionCheck]
+) -> str:
+    """What a reviewer needs: counts first, so a large harvest can be read, then every
+    document with what was said about it."""
+    repo = proposal.repo
+    first = proposal.additions[0]
+    mine = {
+        c.addition.id: c for c in checks if c.addition and c.repo_id == repo.repo_id
+    }
+    counts = Counter((mine[a.id].split, mine[a.id].licence) for a in proposal.additions)
+    rows = [
+        f"| {_cell(a.id)} | {mine[a.id].split} | {_cell(mine[a.id].licence)} "
+        f"| {a.local_change_id} | {_cell(a.change_reason)} |"
+        for a in proposal.additions
+    ]
+    warnings = [
+        f"- `{_cell(a.id)}`: {_cell(w)}"
+        for a in proposal.additions
+        for w in mine[a.id].warnings
+    ]
+    return "\n".join(
+        [
+            f"{TOOL_NOTE} Merging records these additions on `main`; the documents "
+            "join the dataset when a release applies them, after everything already "
+            "published.",
+            "",
+            "- **Change type:** added",
+            f"- **Repo:** `{repo.repo_id}` (corpus `{repo.corpus.name}`, "
+            f"{repo.tier.value})",
+            f"- **From:** `{first.from_repo}` at commit `{first.from_commit[:12]}`",
+            f"- **Submitted by:** {first.changed_by}",
+            f"- **Files changed:** `{layout.ADDITIONS_PATH}`",
+            "",
+            "| split | licence | documents |",
+            "| --- | --- | ---: |",
+            *(
+                f"| {split} | {_cell(licence)} | {n} |"
+                for (split, licence), n in sorted(counts.items())
+            ),
+            "",
+            "| id | split | licence | local_change_id | reason |",
+            "| --- | --- | --- | ---: | --- |",
+            *rows,
+            *(["", "**Warnings:**", "", *warnings] if warnings else []),
+            "",
+            f"**Validation:** all {len(rows)} passed. Each is in `{first.from_repo}` at that "
+            "commit, the licence its XML states puts it in this repo, this repo does not "
+            "hold it yet, and nothing else is pending for it on `main` or in an open pull "
+            "request.",
         ]
     )
 
