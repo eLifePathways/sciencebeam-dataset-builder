@@ -11,7 +11,12 @@ from sciencebeam_dataset_builder.corpus.repo_reader import (
     LocalRepo,
     RepoReadError,
 )
-from tests.corpus._fake_hub import FakeHub, FakePullRequest, removals_change
+from tests.corpus._fake_hub import (
+    FakeHub,
+    FakePullRequest,
+    additions_change,
+    removals_change,
+)
 
 REPO_ID = "elifepathways/sciencebeam-dataset-biorxiv"
 
@@ -92,6 +97,12 @@ class TestHubRepo:
         assert pr.url.endswith("/discussions/7")
         assert pr.files == (layout.REMOVALS_PATH,)
         assert pr.removal_ids == frozenset({"b"})
+
+    def test_an_open_pull_request_says_which_documents_it_adds(self, hub):
+        hub.pull_requests = [FakePullRequest(7, "Add n1", additions_change("n1"))]
+        [pr] = HubRepo(REPO_ID).open_pull_requests()
+        assert pr.files == (layout.ADDITIONS_PATH,)
+        assert (pr.addition_ids, pr.removal_ids) == (frozenset({"n1"}), frozenset())
 
     def test_only_entries_the_pull_request_adds_count(self, hub, tmp_path):
         """Entries already on main are not the PR's own."""

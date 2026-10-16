@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 from sciencebeam_dataset_builder.corpus.addition_rows import (
@@ -20,48 +19,16 @@ from sciencebeam_dataset_builder.corpus.layout import Tier
 from sciencebeam_dataset_builder.corpus.registry import CORPORA
 from sciencebeam_dataset_builder.corpus.repo_reader import LocalRepo
 from sciencebeam_dataset_builder.corpus.schema import CORPUS_SCHEMA
+from tests.corpus._harvest import BY_NC, write_harvest
 from tests.corpus._repos import jats, publish
 
 BIORXIV = CORPORA["biorxiv"]
-BY = "https://creativecommons.org/licenses/by/4.0/"
-BY_NC = "https://creativecommons.org/licenses/by-nc/4.0/"
 STAMP = "2026-10-16T09:00:00Z"
-
-
-def _harvest_file(ids: list[str], licence: str = BY) -> pa.Table:
-    rows = len(ids)
-    text: list[str | None] = [None] * rows
-    return pa.table(
-        {
-            "source": ["biorxiv"] * rows,
-            "id": ids,
-            "doi": [f"10.1/{i}" for i in ids],
-            "version": pa.array(text, pa.string()),
-            "pub_date": ["2026-01-01"] * rows,
-            "title": ["A title"] * rows,
-            "xml_ftfy_applied": [False] * rows,
-            "xml_source_url": [f"https://x/{i}.xml" for i in ids],
-            "xml_downloaded_at": pa.array(text, pa.string()),
-            "pdf_source_url": pa.array(text, pa.string()),
-            "pdf_downloaded_at": pa.array(text, pa.string()),
-            "xml": [jats(doi=f"10.1/{i}", licence=licence) for i in ids],
-            "pdf": [f"pdf of {i}".encode() for i in ids],
-        }
-    )
 
 
 @pytest.fixture
 def harvest(tmp_path: Path) -> LocalRepo:
-    """biorxiv's n1 and n2 in train, n3 (non-commercial) in test; ore's o1."""
-    root = tmp_path / "harvest"
-    for path, table in {
-        "biorxiv-jats/train-00000-of-00001.parquet": _harvest_file(["n1", "n2"]),
-        "biorxiv-jats/test-00000-of-00001.parquet": _harvest_file(["n3"], BY_NC),
-        "ore-jats/train-00000-of-00001.parquet": _harvest_file(["o1"]),
-    }.items():
-        (root / path).parent.mkdir(parents=True, exist_ok=True)
-        pq.write_table(table, root / path)
-    return LocalRepo(root)
+    return write_harvest(tmp_path / "harvest")
 
 
 @dataclass
@@ -95,7 +62,7 @@ class TestAvailable:
         }
 
     def test_only_the_corpus_asked_for_is_listed(self, harvest):
-        assert list(available(CORPORA["ore"], HARVEST_REPO_ID, harvest)) == ["o1"]
+        assert list(available(CORPORA["ore"], HARVEST_REPO_ID, harvest)) == ["o1", "o2"]
 
     def test_a_corpus_repo_gives_its_published_documents(self, tmp_path):
         repo = publish(
