@@ -1,4 +1,4 @@
-"""Tests for corpus.validate — checking additions before they are proposed."""
+"""Tests for corpus.validate_additions — checking additions before they are proposed."""
 
 from pathlib import Path
 
@@ -15,7 +15,7 @@ from sciencebeam_dataset_builder.corpus.ledger import Change, ChangeType, write_
 from sciencebeam_dataset_builder.corpus.lookup import Repo
 from sciencebeam_dataset_builder.corpus.registry import CORPORA
 from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo, LocalRepo
-from sciencebeam_dataset_builder.corpus.validate import check_additions
+from sciencebeam_dataset_builder.corpus.validate_additions import check_additions
 from tests.corpus._fake_hub import (
     FakeHub,
     FakePullRequest,
