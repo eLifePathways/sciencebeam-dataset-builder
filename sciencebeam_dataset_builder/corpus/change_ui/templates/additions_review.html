@@ -1,64 +1,96 @@
 {% extends "base.html" %}
 {% import "macros.html" as m with context %}
 {% block content %}
-<h2>Checks and next step</h2>
-<p class="lead">{{ passed }} of {{ checks | length }} documents can be added. Nothing is
-  proposed from here: run the build below where the snapshot is, check its output, then
-  upload it.</p>
+{% set prs = proposals | length %}
+<h2>Check and review</h2>
+<p class="lead">
+  {%- if all_pass %}{{ "The document" if passed == 1 else "All %d documents" % passed }} can be
+  proposed. Review the change to each repo below.
+  {%- else %}{{ passed }} of {{ checks | length }} documents can be proposed. Leave out the others,
+  or go back and fix them, before submitting.{% endif -%}
+</p>
 
-<div class="table-scroll">
-  <table>
-    <thead>
-      <tr>
-        <th scope="col">Document</th>
-        <th scope="col">Result</th>
-        <th scope="col">Split</th>
-        <th scope="col">Licence</th>
-        <th scope="col">Goes to</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for c in checks %}
-      <tr>
-        <td class="mono">{{ c.uid or c.query }}</td>
-        <td>
-          {% if c.ok %}{{ m.badge("ok", "Can be added") }}{% else %}{{ m.badge("error", "Cannot be added") }}{% endif %}
-          {% if c.errors %}<ul class="errors">{% for e in c.errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
-          {% if c.warnings %}<ul class="warnings">{% for w in c.warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}
-        </td>
-        <td>{{ c.split }}</td>
-        <td>{{ c.licence or "never recorded" }}</td>
-        <td class="mono">{{ c.repo_id }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+<form method="post" action="/additions/submit">
+  {{ m.csrf_field() }}
+  {{ m.carry_from(source) }}
+  {{ m.carry(draft) }}
+  {% for p in proposals %}
+  <input type="hidden" name="digest:{{ p.repo_id }}" value="{{ p.digest }}">
+  {% endfor %}
 
-{% for p in plans %}
-<section class="proposal" aria-label="Build for {{ p.repo_id }}">
-  <header>
-    <strong>{{ p.repo_id }}</strong> {{ m.badge(p.tier.value) }}
-    <p>Adds {{ p.requested | length }} of these on top of {{ p.base_release }} as
-      {{ p.version }}, in a new shard after the existing ones, so no document already
-      published moves.</p>
-  </header>
-  <pre>{{ p.command }}</pre>
-  {% if p.also_added %}
-  <details>
-    <summary>The build also adds {{ p.also_added | length }} other new document{{ '' if p.also_added | length == 1 else 's' }}
-      from the snapshot that route here</summary>
-    <pre>{% for id in p.also_added[:max_listed] %}{{ id }}
-{% endfor %}{% if p.also_added | length > max_listed %}… and {{ p.also_added | length - max_listed }} more
-{% endif %}</pre>
-  </details>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Document</th>
+          <th scope="col">Result</th>
+          <th scope="col">Split</th>
+          <th scope="col">Licence</th>
+          <th scope="col">Goes to</th>
+          <th scope="col">Reason</th>
+          <th scope="col"><span class="visually-hidden">Action</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in checks %}
+        <tr>
+          <td class="mono">{{ c.id }}</td>
+          <td>
+            {% if c.ok %}{{ m.badge("ok", "Can be proposed") }}
+            {% else %}{{ m.badge("error", "Cannot be proposed") }}{% endif %}
+            {% if c.errors %}<ul class="errors">{% for e in c.errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+            {% if c.warnings %}<ul class="warnings">{% for w in c.warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}
+          </td>
+          <td>{{ c.split }}</td>
+          <td>{{ c.licence }}</td>
+          <td class="mono">{{ c.repo_name }}</td>
+          <td>{{ c.reason }}</td>
+          <td>
+            {% if not c.ok %}
+            <button class="small" name="leave_out" value="{{ c.query }}"
+                    formaction="/additions/check">Leave out</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if prs %}<h3>What each pull request adds</h3>{% endif %}
+  {% for p in proposals %}
+  <section class="proposal" aria-label="Change to {{ p.repo_id }}">
+    <header>
+      <strong>{{ p.repo_id }}</strong> {{ m.badge(p.tier) }}
+      <p>{{ p.count }} addition{{ '' if p.count == 1 else 's' }} added to {{ p.path }}
+        {%- if p.before is none %}, which this creates{% endif %}.</p>
+    </header>
+    <pre class="added">{% for line in p.added_lines %}+ {{ line }}
+{% endfor %}</pre>
+    {% if p.before is not none %}
+    <details>
+      <summary>The file as it is now</summary>
+      <pre>{{ p.before }}</pre>
+    </details>
+    {% endif %}
+  </section>
+  {% endfor %}
+
+  {% if not can_submit %}
+  <p class="notice">This is a preview against a local build, so submitting is switched off.</p>
   {% endif %}
-</section>
-{% endfor %}
 
-<div class="actions">
-  <a class="button primary" href="/">Start a new request</a>
-  <span class="spacer"></span>
-  <a class="button back" href="/additions">Back</a>
-</div>
+  <label class="confirm">
+    <input type="checkbox" name="confirm" value="yes" {% if not (all_pass and prs) %}disabled{% endif %}>
+    <span>I have reviewed these additions. Open {{ prs }} pull request{{ '' if prs == 1 else 's' }}
+      for review. The documents join the dataset when a release applies the change.</span>
+  </label>
+
+  <div class="actions">
+    <button class="primary" {% if not (all_pass and prs and can_submit) %}disabled{% endif %}>
+      Open {{ prs }} pull request{{ '' if prs == 1 else 's' }}</button>
+    <span class="spacer"></span>
+    <button class="back" formaction="/additions/reasons">Back</button>
+  </div>
+</form>
 {% endblock %}

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% import "macros.html" as m with context %}
+{% block content %}
+<h2>Why are they being added?</h2>
+<p class="lead">{{ draft.uids | length }} {{ source.corpus.name }} document{{ '' if draft.uids | length == 1 else 's' }}
+  from <span class="mono">{{ source.repo_id }}</span> at commit
+  <span class="mono">{{ source.commit[:12] }}</span>. Give one reason for all of them, and change it
+  for any document that needs its own.</p>
+
+<form method="post" action="/additions/check">
+  {{ m.csrf_field() }}
+  {{ m.carry_from(source) }}
+  {{ m.carry(draft, reasons=false) }}
+  <div class="field">
+    <label for="shared">Reason for all documents</label>
+    <textarea id="shared" name="shared" class="reason" maxlength="{{ max_reason }}">{{ draft.shared }}</textarea>
+  </div>
+
+  <h3>Reasons for individual documents</h3>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th scope="col">Document</th><th scope="col">Own reason (optional)</th></tr>
+      </thead>
+      <tbody>
+        {% for uid in draft.uids %}
+        <tr>
+          <td class="mono">{{ uid }}</td>
+          <td>
+            <input type="text" name="own:{{ uid }}" value="{{ draft.own[uid] }}"
+                   maxlength="{{ max_reason }}" placeholder="Uses the reason for all documents"
+                   aria-label="Reason for {{ uid }}">
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="actions">
+    <button class="primary">Check these additions</button>
+    <span class="spacer"></span>
+    <button class="back" formaction="/additions/edit">Back</button>
+  </div>
+</form>
+{% endblock %}

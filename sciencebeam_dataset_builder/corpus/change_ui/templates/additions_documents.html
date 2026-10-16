@@ -2,22 +2,15 @@
 {% import "macros.html" as m with context %}
 {% block content %}
 <h2>Which documents to add?</h2>
-<p class="lead">A document is added from the source snapshot by the corpus build, not by a pull
-  request. This checks that the build would add it, says which repo its licence puts it in
-  and which split the snapshot gives it, and gives the command to run.</p>
+<p class="lead">Documents come from one commit of the harvest repo, or of the corpus's other repo
+  to move them. Each one's licence, as its XML states it, decides which repo it goes to, and its
+  split is the one it has there.</p>
 
-{% if inputs is none %}
-<p class="notice">Adding needs the source snapshot and the licence report, which are only on
-  the machine that builds the corpora. Start this page there, with <code>--data-dir</code>
-  and <code>--licence-report</code> if they are not in their usual places.</p>
-{% else %}
-<form method="post" action="/additions/check">
+<form method="post" action="/additions/reasons">
   {{ m.csrf_field() }}
   <div class="field">
     <label for="corpus">Corpus</label>
-    <span class="hint" id="corpus-hint">The corpus the documents come from. Each one's
-      licence decides which of its repos it goes to.</span>
-    <select id="corpus" name="corpus" required aria-describedby="corpus-hint">
+    <select id="corpus" name="corpus" required>
       <option value="">Choose a corpus</option>
       {% for c in corpora %}
       <option value="{{ c.name }}"{% if c.name == corpus %} selected{% endif %}>{{ c.name }}</option>
@@ -25,17 +18,38 @@
     </select>
   </div>
   <div class="field">
+    <label for="from_repo">From</label>
+    <span class="hint" id="from-hint">The harvest, or a repo of the corpus to move documents out
+      of once their removal there is released.</span>
+    <select id="from_repo" name="from_repo" aria-describedby="from-hint">
+      {% for r in from_repos %}
+      <option value="{{ r }}"{% if r == from_repo %} selected{% endif %}>{{ r }}{% if r == harvest %} (the harvest){% endif %}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="revision">Revision</label>
+    <span class="hint" id="revision-hint">A branch, tag or commit. It is pinned to its commit
+      when you continue, and the pull request records that commit.</span>
+    <input type="text" id="revision" name="revision" value="{{ revision }}" spellcheck="false"
+           aria-describedby="revision-hint">
+  </div>
+  <div class="field">
     <label for="ids">Document ids</label>
-    <span class="hint" id="ids-hint">As in the snapshot, like 10.1101_2022.01.01.000000;
+    <span class="hint" id="ids-hint">Like 10.1101_2022.01.01.000000;
       <code>&lt;source&gt;__&lt;id&gt;</code> works too. Up to {{ max_documents }},
       separated by new lines, spaces or commas.</span>
     <textarea id="ids" name="ids" spellcheck="false" aria-describedby="ids-hint">{{ ids }}</textarea>
   </div>
+  <label class="confirm">
+    <input type="checkbox" name="all_new" value="yes" {% if all_new %}checked{% endif %}>
+    <span>Instead, every new document in it: in no repo of the corpus, never removed from one,
+      and with a licence that puts it in one.</span>
+  </label>
   <div class="actions">
-    <button class="primary">Check these documents</button>
+    <button class="primary">Continue</button>
     <span class="spacer"></span>
     <a class="button back" href="/">Back</a>
   </div>
 </form>
-{% endif %}
 {% endblock %}
