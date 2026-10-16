@@ -12,6 +12,13 @@
 {% if reasons %}<input type="hidden" name="shared" value="{{ draft.shared }}">{% endif %}
 {%- endmacro %}
 
+{# Where an addition's documents come from, pinned to the commit the first page named. #}
+{% macro carry_from(source) -%}
+<input type="hidden" name="corpus" value="{{ source.corpus.name }}">
+<input type="hidden" name="from_repo" value="{{ source.repo_id }}">
+<input type="hidden" name="from_commit" value="{{ source.commit }}">
+{%- endmacro %}
+
 {% macro badge(kind, text=none) -%}
 <span class="badge {{ kind }}">{{ text or kind }}</span>
 {%- endmacro %}

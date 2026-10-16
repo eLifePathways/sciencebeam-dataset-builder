@@ -165,6 +165,13 @@ class TestCheckRemovals:
         assert checks[1].ok
         assert [p.repo.repo_id for p in proposals] == [ore.repo_id]
 
+    def test_a_broken_additions_file_blocks_its_repo(self, biorxiv):
+        """It holds part of each document's local_change_id sequence."""
+        write_file(biorxiv, layout.ADDITIONS_PATH, "additions: [\n")
+        checks, proposals = check_removals([("a", REASON)], [biorxiv], "hazal")
+        assert "additions.yml is not valid YAML" in checks[0].errors[0]
+        assert proposals == []
+
     def test_a_file_that_cannot_be_appended_to_blocks_its_documents(self, biorxiv):
         write_file(biorxiv, layout.REMOVALS_PATH, "removals: []\n")
         checks, proposals = check_removals([("a", REASON)], [biorxiv], "hazal")

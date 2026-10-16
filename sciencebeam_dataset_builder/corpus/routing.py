@@ -59,7 +59,11 @@ def read_licences(path: Path) -> dict[str, str]:
 
 def route(uid: str, licences: Mapping[str, str]) -> Verdict:
     """Decide one document's side."""
-    licence = licences.get(uid, NEVER_RECORDED)
+    return route_licence(uid, licences.get(uid, NEVER_RECORDED))
+
+
+def route_licence(uid: str, licence: str) -> Verdict:
+    """Decide one document's side from its licence label."""
     if licence in PUBLISHABLE_LICENCES:
         return Verdict(uid, licence, Tier.OPEN, f"{licence} permits redistribution")
     if licence == NEVER_RECORDED:

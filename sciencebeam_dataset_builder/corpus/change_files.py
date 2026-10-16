@@ -25,9 +25,12 @@ EDITABLE_FIELDS = (
 CORRECTION_TYPES = (ChangeType.CONTENT_CORRECTED, ChangeType.METADATA_CORRECTED)
 
 _REMOVAL_KEYS = ("id", "local_change_id", "change_reason", "changed_by")
+_ADDITION_KEYS = (*_REMOVAL_KEYS, "from")
 _CORRECTION_KEYS = ("local_change_id", "change_type", "change_reason", "changed_by")
 _ITEM_INDENT = re.compile(r"^( *)- ", re.MULTILINE)
 _NO_WRAP = 1_000_000
+_REPO_ID = re.compile(r"^[\w.-]+/[\w.-]+$", re.ASCII)
+_COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
 class ChangeFileError(ValueError):
@@ -42,6 +45,18 @@ class Removal:
     local_change_id: int
     change_reason: str
     changed_by: str
+
+
+@dataclass(frozen=True)
+class Addition:
+    """One entry of `additions.yml`, with the repo and commit its row is read from."""
+
+    id: str
+    local_change_id: int
+    change_reason: str
+    changed_by: str
+    from_repo: str
+    from_commit: str
 
 
 @dataclass(frozen=True)
@@ -93,6 +108,23 @@ def read_removals(text: str | None) -> list[Removal]:
     return removals
 
 
+def read_additions(text: str | None) -> list[Addition]:
+    """The entries of `additions.yml`; `None` is a file that does not exist yet."""
+    if text is None:
+        return []
+    where = layout.ADDITIONS_PATH
+    document = _load(text, where)
+    _check_keys(document, ("additions",), (), where)
+    items = document["additions"] or []
+    if not isinstance(items, list):
+        raise ChangeFileError(f"{where}: additions must be a list")
+    additions = [
+        _addition(item, f"{where} entry {n}") for n, item in enumerate(items, start=1)
+    ]
+    _check_unique([(a.id, a.local_change_id) for a in additions], where)
+    return additions
+
+
 def read_correction(text: str | None, id_value: str) -> list[Correction]:
     """The entries of one document's `correction.yml`; `None` is no file yet."""
     if text is None:
@@ -126,6 +158,20 @@ def append_removals(text: str | None, new: Sequence[Removal]) -> str:
     return appended
 
 
+def append_additions(text: str | None, new: Sequence[Addition]) -> str:
+    """`additions.yml` with `new` after the existing entries, which stay byte for byte."""
+    if not new:
+        raise ChangeFileError("no additions to append")
+    existing = read_additions(text)
+    appended = _append_items(
+        "additions:\n" if text is None else text, [_addition_item(a) for a in new]
+    )
+    _check_appended(
+        lambda: read_additions(appended), [*existing, *new], layout.ADDITIONS_PATH
+    )
+    return appended
+
+
 def append_correction(text: str | None, id_value: str, new: Correction) -> str:
     """`correction.yml` with `new` after the existing entries, which stay byte for byte."""
     existing = read_correction(text, id_value)
@@ -142,12 +188,14 @@ def append_correction(text: str | None, id_value: str, new: Correction) -> str:
 def next_local_change_id(
     id_value: str,
     removals: Iterable[Removal],
+    additions: Iterable[Addition],
     corrections: Iterable[Correction],
     ledger: Iterable[Change],
 ) -> int:
     """One past the highest the document has used anywhere, since the ledger refuses
     a repeated `(id, local_change_id)`. `corrections` are the document's own."""
     used = [r.local_change_id for r in removals if r.id == id_value]
+    used += [a.local_change_id for a in additions if a.id == id_value]
     used += [c.local_change_id for c in corrections]
     used += [
         c.local_change_id
@@ -215,6 +263,29 @@ def _removal(item: Any, where: str) -> Removal:
     )
 
 
+def _addition(item: Any, where: str) -> Addition:
+    _check_keys(item, _ADDITION_KEYS, (), where)
+    from_repo, from_commit = _from(item["from"], where)
+    return Addition(
+        id=_document_id(item["id"], where),
+        local_change_id=_local_change_id(item["local_change_id"], where),
+        change_reason=_text(item["change_reason"], "change_reason", where),
+        changed_by=_text(item["changed_by"], "changed_by", where),
+        from_repo=from_repo,
+        from_commit=from_commit,
+    )
+
+
+def _from(value: Any, where: str) -> tuple[str, str]:
+    """`<repo id>@<commit>`: a full commit, since a branch or a tag can move."""
+    repo, _, commit = _text(value, "from", where).rpartition("@")
+    if not _REPO_ID.match(repo) or not _COMMIT.match(commit):
+        raise ChangeFileError(
+            f"{where}: from must be <repo id>@<full 40-character commit>, got {value!r}"
+        )
+    return repo, commit
+
+
 def _correction(item: Any, where: str) -> Correction:
     _check_keys(item, _CORRECTION_KEYS, ("fields",), where)
     by_value = {t.value: t for t in CORRECTION_TYPES}
@@ -269,6 +340,16 @@ def _removal_item(removal: Removal) -> dict[str, Any]:
         "local_change_id": removal.local_change_id,
         "change_reason": removal.change_reason,
         "changed_by": removal.changed_by,
+    }
+
+
+def _addition_item(addition: Addition) -> dict[str, Any]:
+    return {
+        "id": addition.id,
+        "local_change_id": addition.local_change_id,
+        "change_reason": addition.change_reason,
+        "changed_by": addition.changed_by,
+        "from": f"{addition.from_repo}@{addition.from_commit}",
     }
 
 

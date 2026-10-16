@@ -1,6 +1,6 @@
 """Reading a corpus repo's files, wherever the repo is."""
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
@@ -12,12 +12,23 @@ import pyarrow.parquet as pq
 
 from sciencebeam_dataset_builder.corpus import layout
 from sciencebeam_dataset_builder.corpus.change_files import (
+    Addition,
     ChangeFileError,
+    Removal,
+    read_additions,
     read_removals,
 )
 
 if TYPE_CHECKING:
     from huggingface_hub import HfApi, HfFileSystem
+
+_ReadEntries = Callable[[str], Iterable[Removal | Addition]]
+
+# The bulk files whose PR entries are told apart by document, in PullRequest's order.
+_ENTRY_FILES: tuple[tuple[str, _ReadEntries], ...] = (
+    (layout.REMOVALS_PATH, read_removals),
+    (layout.ADDITIONS_PATH, read_additions),
+)
 
 
 class RepoReadError(OSError):
@@ -38,13 +49,15 @@ class RepoReader(Protocol):
 @dataclass(frozen=True)
 class PullRequest:
     """An open pull request: the `changes/` files it touches, and the documents it adds
-    to `removals.yml` - None where that cannot be read, so a check fails closed."""
+    to `removals.yml` and `additions.yml` - None where that cannot be read, so a check
+    fails closed."""
 
     num: int
     title: str
     url: str
     files: tuple[str, ...]
     removal_ids: frozenset[str] | None = frozenset()
+    addition_ids: frozenset[str] | None = frozenset()
 
 
 @dataclass(frozen=True)
@@ -156,12 +169,17 @@ class HubRepo:
                         if before.get(p) != after.get(p)
                     )
                 )
-                removal_ids = (
-                    self._removals_added(api, base, head)
-                    if layout.REMOVALS_PATH in files
+                removal_ids, addition_ids = (
+                    self._ids_added(api, base, head, path, read)
+                    if path in files
                     else frozenset()
+                    for path, read in _ENTRY_FILES
                 )
-                found.append(PullRequest(pr.num, pr.title, pr.url, files, removal_ids))
+                found.append(
+                    PullRequest(
+                        pr.num, pr.title, pr.url, files, removal_ids, addition_ids
+                    )
+                )
         return found
 
     def _changes(self, api: "HfApi", revision: str) -> dict[str, str]:
@@ -183,30 +201,31 @@ class HubRepo:
         except EntryNotFoundError:
             return {}
 
-    def _removals_added(
-        self, api: "HfApi", base: str, head: str
+    def _ids_added(
+        self, api: "HfApi", base: str, head: str, path: str, read: "_ReadEntries"
     ) -> frozenset[str] | None:
-        """The documents a PR adds to `removals.yml`; None when either side is unreadable."""
+        """The documents a PR adds to one entry file; None when either side is unreadable."""
         try:
-            added = self._removals_at(api, head) - self._removals_at(api, base)
+            added = self._entries_at(api, head, path, read) - self._entries_at(
+                api, base, path, read
+            )
         except ChangeFileError:
             return None
         return frozenset(id_value for id_value, _ in added)
 
-    def _removals_at(self, api: "HfApi", revision: str) -> set[tuple[str, int]]:
+    def _entries_at(
+        self, api: "HfApi", revision: str, path: str, read: "_ReadEntries"
+    ) -> set[tuple[str, int]]:
         from huggingface_hub.errors import EntryNotFoundError
 
         try:
             local = api.hf_hub_download(
-                self.repo_id,
-                layout.REMOVALS_PATH,
-                repo_type="dataset",
-                revision=revision,
+                self.repo_id, path, repo_type="dataset", revision=revision
             )
         except EntryNotFoundError:
             return set()
         text = Path(str(local)).read_text(encoding="utf-8")
-        return {(r.id, r.local_change_id) for r in read_removals(text)}
+        return {(e.id, e.local_change_id) for e in read(text)}
 
     def _api(self) -> "HfApi":
         from huggingface_hub import HfApi

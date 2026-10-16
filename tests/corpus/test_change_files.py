@@ -3,12 +3,15 @@
 import pytest
 
 from sciencebeam_dataset_builder.corpus.change_files import (
+    Addition,
     ChangeFileError,
     Correction,
     Removal,
+    append_additions,
     append_correction,
     append_removals,
     next_local_change_id,
+    read_additions,
     read_correction,
     read_removals,
 )
@@ -23,6 +26,18 @@ removals:
     changed_by: hazal
 """
 
+SOURCE = "elifepathways/sciencebeam-v2-benchmarking"
+COMMIT = "0b7d4a5c6e8f0a1b2c3d4e5f6a7b8c9d0e9f1c2e"
+
+ADDITIONS = f"""\
+additions:
+  - id: '10.1101_000000'
+    local_change_id: 1
+    change_reason: new in the harvest
+    changed_by: hazal
+    from: {SOURCE}@{COMMIT}
+"""
+
 CORRECTION = """\
 id: a
 corrections:
@@ -35,6 +50,12 @@ corrections:
 
 def _removal(id_value: str = "b", local_change_id: int = 1) -> Removal:
     return Removal(id_value, local_change_id, "duplicate of another record", "hazal")
+
+
+def _addition(id_value: str = "b", local_change_id: int = 1) -> Addition:
+    return Addition(
+        id_value, local_change_id, "new in the harvest", "hazal", SOURCE, COMMIT
+    )
 
 
 def _correction(
@@ -182,6 +203,65 @@ class TestAppendRemovals:
             append_removals(REMOVALS, [Removal("b", 1, " ", "hazal")])
 
 
+class TestReadAdditions:
+    def test_a_file_that_does_not_exist_yet_has_no_additions(self):
+        assert read_additions(None) == []
+
+    def test_entries_are_read_with_where_they_come_from(self):
+        [addition] = read_additions(ADDITIONS)
+        assert addition == _addition("10.1101_000000")
+
+    def test_a_missing_from_is_named(self):
+        text = ADDITIONS.replace(f"    from: {SOURCE}@{COMMIT}\n", "")
+        with pytest.raises(ChangeFileError, match="missing from"):
+            read_additions(text)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "main",
+            f"{SOURCE}@main",
+            f"{SOURCE}@v1.0.0",
+            f"{SOURCE}@{COMMIT[:7]}",
+            f"{SOURCE}@{COMMIT.upper()}",
+            f"sciencebeam-v2-benchmarking@{COMMIT}",
+            f"{SOURCE}@",
+        ],
+    )
+    def test_from_has_to_name_a_repo_and_a_full_commit(self, value):
+        """A branch or a tag can move; a commit cannot."""
+        text = ADDITIONS.replace(f"{SOURCE}@{COMMIT}", value)
+        with pytest.raises(ChangeFileError, match="full 40-character commit"):
+            read_additions(text)
+
+    def test_the_same_document_and_local_change_id_twice_is_refused(self):
+        entry = ADDITIONS.split("additions:\n", 1)[1]
+        with pytest.raises(ChangeFileError, match="more than once"):
+            read_additions(ADDITIONS + entry)
+
+    def test_an_unknown_key_is_refused(self):
+        with pytest.raises(ChangeFileError, match="unknown key"):
+            read_additions(ADDITIONS + "    split: train\n")
+
+
+class TestAppendAdditions:
+    def test_the_file_is_created_when_absent(self):
+        text = append_additions(None, [_addition()])
+        assert read_additions(text) == [_addition()]
+
+    def test_existing_text_is_kept_byte_for_byte(self):
+        text = append_additions(ADDITIONS, [_addition()])
+        assert text.startswith(ADDITIONS)
+        assert read_additions(text)[-1] == _addition()
+
+    def test_from_is_written_as_one_value(self):
+        assert f"from: {SOURCE}@{COMMIT}\n" in append_additions(None, [_addition()])
+
+    def test_nothing_to_append_is_refused(self):
+        with pytest.raises(ChangeFileError, match="no additions"):
+            append_additions(ADDITIONS, [])
+
+
 class TestReadCorrection:
     def test_a_file_that_does_not_exist_yet_has_no_corrections(self):
         assert read_correction(None, "a") == []
@@ -267,20 +347,22 @@ class TestAppendCorrection:
 
 class TestNextLocalChangeId:
     def test_a_document_never_changed_starts_at_one(self):
-        assert next_local_change_id("a", [], [], []) == 1
+        assert next_local_change_id("a", [], [], [], []) == 1
 
-    def test_removals_corrections_and_the_ledger_share_one_sequence(self):
+    def test_every_change_type_and_the_ledger_share_one_sequence(self):
         """The ledger refuses a repeated (id, local_change_id) across change types."""
         corrections = read_correction(CORRECTION, "a")
         removals = [Removal("a", 3, "why", "hazal")]
         ledger = [_ledger_row("a", 4)]
-        assert next_local_change_id("a", removals, corrections, ledger) == 5
+        assert next_local_change_id("a", removals, [], corrections, ledger) == 5
+        additions = [_addition("a", 6)]
+        assert next_local_change_id("a", removals, additions, corrections, ledger) == 7
 
     def test_other_documents_do_not_count(self):
         removals = [Removal("b", 7, "why", "hazal")]
         ledger = [_ledger_row("b", 9), _ledger_row("a", None)]
-        assert next_local_change_id("a", removals, [], ledger) == 1
+        assert next_local_change_id("a", removals, [_addition("b", 8)], [], ledger) == 1
 
     def test_a_gap_is_never_filled(self):
         removals = [Removal("a", 1, "why", "hazal"), Removal("a", 4, "why", "hazal")]
-        assert next_local_change_id("a", removals, [], []) == 5
+        assert next_local_change_id("a", removals, [], [], []) == 5

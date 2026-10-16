@@ -65,6 +65,20 @@ def removals_change(*ids: str) -> dict[str, bytes]:
     return {"changes/removals/removals.yml": text.encode()}
 
 
+def additions_change(*ids: str) -> dict[str, bytes]:
+    """A pull request's files when it adds these ids to a new `additions.yml`."""
+    from sciencebeam_dataset_builder.corpus.change_files import (
+        Addition,
+        append_additions,
+    )
+
+    text = append_additions(
+        None,
+        [Addition(i, 1, "proposed", "someone", "o/source", "0" * 40) for i in ids],
+    )
+    return {"changes/additions/additions.yml": text.encode()}
+
+
 def _url(repo_id: str, num: int) -> str:
     return f"https://huggingface.co/datasets/{repo_id}/discussions/{num}"
 
