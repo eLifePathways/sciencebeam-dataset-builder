@@ -1,4 +1,4 @@
-"""Build one corpus repo's release from the real benchmark-v002 snapshot.
+"""Build one corpus repo's first release from the real benchmark-v002 snapshot.
 
 Reads a corpus's legacy split files (the old 23-column canonical schema), maps each row
 onto the 15-column corpus schema, routes it by its audited licence, and writes the
@@ -13,15 +13,11 @@ card. Nothing here uploads anything; that is `--upload`, a separate, deliberate 
 
 Rerunning the same command is safe: the whole population is re-derived from the
 snapshot every time and `prepare_release` overwrites the same shards, never appending
-duplicates. `--base-release` is the other case - growing an *already published*
-release without rewriting what is already there:
+duplicates.
 
-    python -m sciencebeam_dataset_builder.corpus.build_cli --corpus biorxiv --tier open \\
-        --version v1.1.0 --base-release v1.0.0
-
-This only adds. A document that no longer routes to this tier, or whose split would
-disagree with what was already published, stops the build rather than silently
-dropping or reshuffling it - that needs its own reviewed workflow.
+A first release only. Once a repo has one, a rebuild would add documents nobody
+declared and bring back removed ones, so uploading over it is refused; documents are
+added through `changes/additions/additions.yml` and `change_cli` instead.
 """
 
 import argparse
@@ -38,13 +34,6 @@ import pyarrow.parquet as pq
 
 from sciencebeam_dataset_builder.corpus import layout
 from sciencebeam_dataset_builder.corpus.layout import Tier
-from sciencebeam_dataset_builder.corpus.ledger import (
-    Change,
-    ChangeType,
-    PendingChange,
-    read_ledger,
-    read_membership,
-)
 from sciencebeam_dataset_builder.corpus.publish import PreparedRelease, prepare_release
 from sciencebeam_dataset_builder.corpus.registry import CORPORA, Corpus
 from sciencebeam_dataset_builder.corpus.routing import read_licences, route
@@ -139,25 +128,12 @@ def build_table(rows: list[dict[str, Any]], row_updated_at: str) -> pa.Table:
     return pa.table(columns, schema=CORPUS_SCHEMA)
 
 
-def existing_repo_files(root: Path) -> list[str]:
-    """Every file already published under `root`, as repo-relative paths."""
-    if not root.is_dir():
-        return []
-    return [str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()]
-
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", required=True, choices=sorted(CORPORA))
     parser.add_argument("--tier", required=True, choices=[t.value for t in Tier])
     parser.add_argument(
         "--version", default="v1.0.0", help="The release tag this build produces."
-    )
-    parser.add_argument(
-        "--base-release",
-        default="",
-        help="Grow an already published release instead of building from scratch. "
-        "Only adds: a removal or a split disagreement stops the build.",
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--licence-report", type=Path, default=DEFAULT_LICENCE_REPORT)
@@ -187,6 +163,8 @@ def main(argv: list[str] | None = None) -> None:
             f"{corpus.name!r} has no {tier.value} repo; its tiers are "
             f"{[t.value for t in corpus.tiers]}"
         )
+    if args.upload:
+        refuse_released(corpus.repo_id(tier))
 
     snapshot_dir = latest_snapshot(args.data_dir)
     print(f"Reading {corpus.legacy_config!r} from {snapshot_dir}")
@@ -210,56 +188,6 @@ def main(argv: list[str] | None = None) -> None:
     table = build_table(kept, now)
 
     pairing = corpus.pairings[0]
-    root = args.output_dir / layout.repo_name(corpus.name, tier)
-    pending: list[PendingChange] = []
-    already_published: set[str] = set()
-    existing_files: list[str] = []
-    existing_changes: list[Change] = []
-
-    if args.base_release:
-        manifest_path = root / layout.release_manifest_path(args.base_release)
-        if not manifest_path.exists():
-            raise SystemExit(
-                f"{manifest_path} does not exist; build {args.base_release} first"
-            )
-        prior = read_membership(manifest_path)
-        prior_ids = {m.id for m in prior}
-        carried_splits = {m.id: m.split for m in prior}
-
-        current_ids = set(splits)
-        removed = prior_ids - current_ids
-        if removed:
-            raise SystemExit(
-                f"{len(removed)} previously published id(s) no longer route to "
-                f"{tier.value}, e.g. {sorted(removed)[:3]}. This only adds; a removal "
-                f"needs its own reviewed removals.yml workflow, not an automatic diff."
-            )
-        drifted = sorted(i for i in prior_ids if splits[i] != carried_splits[i])
-        if drifted:
-            raise SystemExit(
-                f"{len(drifted)} id(s) would change split, e.g. {drifted[:3]}. A "
-                f"split is carried forever once published, never recomputed."
-            )
-
-        new_ids = sorted(current_ids - prior_ids)
-        already_published = prior_ids
-        existing_files = existing_repo_files(root)
-        ledger_path = root / layout.LEDGER_PATH
-        existing_changes = read_ledger(ledger_path) if ledger_path.exists() else []
-        pending = [
-            PendingChange(
-                corpus=corpus.name,
-                id=id_value,
-                split=splits[id_value],
-                file_type_pair=pairing,
-                change_type=ChangeType.ADDED,
-                change_reason=f"present in {snapshot_dir.name}",
-                changed_by=os.environ.get("USER", "unknown"),
-            )
-            for id_value in new_ids
-        ]
-        print(f"{len(new_ids)} new id(s) since {args.base_release}: {new_ids[:5]}")
-
     release = prepare_release(
         corpus=corpus,
         tier=tier,
@@ -268,12 +196,8 @@ def main(argv: list[str] | None = None) -> None:
         splits=splits,
         version=args.version,
         output_dir=args.output_dir,
-        pending=pending,
+        pending=[],
         timestamp=datetime.now(UTC),
-        base_release=args.base_release,
-        already_published=already_published,
-        existing_files=existing_files,
-        existing_changes=existing_changes,
     )
 
     print(f"Wrote {release.root}")
@@ -288,6 +212,24 @@ def main(argv: list[str] | None = None) -> None:
 
 
 MAX_UPLOAD_ATTEMPTS = 3
+
+
+def refuse_released(repo_id: str) -> None:
+    """Stop before building when the repo already has a release on the Hub."""
+    from huggingface_hub import HfApi
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    try:
+        files = HfApi(token=os.environ.get("HF_TOKEN")).list_repo_files(
+            repo_id, repo_type="dataset"
+        )
+    except RepositoryNotFoundError:
+        return
+    if released := layout.latest_release(files):
+        raise SystemExit(
+            f"{repo_id} already has release {released}. build_cli makes a repo's first "
+            f"release only; add documents through {layout.ADDITIONS_PATH} and change_cli."
+        )
 
 
 def upload_release(release: PreparedRelease) -> None:

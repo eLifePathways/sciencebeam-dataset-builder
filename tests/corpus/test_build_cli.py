@@ -10,13 +10,11 @@ from sciencebeam_dataset_builder.corpus import build_cli
 from sciencebeam_dataset_builder.corpus.build_cli import (
     BuildError,
     build_table,
-    existing_repo_files,
     main,
     read_legacy_rows,
     route_rows,
 )
 from sciencebeam_dataset_builder.corpus.layout import Tier
-from sciencebeam_dataset_builder.corpus.ledger import read_ledger, read_membership
 from sciencebeam_dataset_builder.corpus.parquet_io import read_shard
 
 # The old 23-column canonical schema's shape, trimmed to what build_cli actually reads.
@@ -165,20 +163,6 @@ class TestBuildTable:
         assert table.to_pydict()["xml_upstream_sha"] == [expected]
 
 
-class TestExistingRepoFiles:
-    def test_lists_every_file_as_a_relative_path(self, tmp_path):
-        (tmp_path / "pdf-jats/train").mkdir(parents=True)
-        (tmp_path / "pdf-jats/train/train-00000.parquet").write_bytes(b"x")
-        (tmp_path / "README.md").write_text("hi", encoding="utf-8")
-        assert sorted(existing_repo_files(tmp_path)) == [
-            "README.md",
-            "pdf-jats/train/train-00000.parquet",
-        ]
-
-    def test_a_directory_that_does_not_exist_yet_is_empty(self, tmp_path):
-        assert existing_repo_files(tmp_path / "nothing-here") == []
-
-
 class TestMainEndToEnd:
     """The scenario this was built for: a second build must not duplicate, rewrite or
     reshuffle what the first one already published."""
@@ -207,7 +191,8 @@ class TestMainEndToEnd:
             str(output_dir),
         ]
         for key, value in extra_args.items():
-            argv += [f"--{key.replace('_', '-')}", str(value)]
+            flag = f"--{key.replace('_', '-')}"
+            argv += [flag] if value is True else [flag, str(value)]
         main(argv)
         return output_dir / "sciencebeam-dataset-biorxiv"
 
@@ -225,40 +210,44 @@ class TestMainEndToEnd:
         assert read_shard(str(root / "pdf-jats/test/test-00000.parquet")).num_rows == 2
         assert len(first_bytes) > 0 and len(second_bytes) > 0
 
-    def test_an_incremental_build_adds_without_touching_old_shards(self, tmp_path):
+    def test_growing_a_published_release_is_no_longer_its_job(self, tmp_path):
+        """Additions go through additions.yml and the apply step."""
         _snapshot(tmp_path, "biorxiv", {"train": ["a"], "test": ["b"]})
-        first_root = self._run(tmp_path, version="v1.0.0")
-        old_train = first_root / "pdf-jats/train/train-00000.parquet"
-        old_mtime = old_train.stat().st_mtime_ns
-
-        # The snapshot grows: "c" is a new test document.
-        _snapshot(tmp_path, "biorxiv", {"train": ["a"], "test": ["b", "c"]})
-        second_root = self._run(tmp_path, version="v1.1.0", base_release="v1.0.0")
-
-        assert second_root == first_root
-        assert old_train.stat().st_mtime_ns == old_mtime, "old shard was rewritten"
-        assert not (second_root / "pdf-jats/test/test-00001.parquet").exists() or (
-            read_shard(str(second_root / "pdf-jats/test/test-00001.parquet"))
-            .column("id")
-            .to_pylist()
-            == ["c"]
-        )
-
-        manifest = read_membership(second_root / "releases/v1.1.0.csv")
-        assert {m.id for m in manifest} == {"a", "b", "c"}
-
-        ledger = read_ledger(second_root / "releases/document-changes.csv")
-        assert [c.id for c in ledger] == ["c"]
-        assert ledger[0].base_release == "v1.0.0"
-
-    def test_a_removal_is_refused_rather_than_silently_dropped(self, tmp_path):
-        _snapshot(tmp_path, "biorxiv", {"train": ["a"], "test": ["b"]})
-        self._run(tmp_path, version="v1.0.0")
-
-        # "b" disappears from the snapshot entirely.
-        _snapshot(tmp_path, "biorxiv", {"train": ["a"], "test": []})
-        with pytest.raises(SystemExit, match="no longer route"):
+        with pytest.raises(SystemExit):
             self._run(tmp_path, version="v1.1.0", base_release="v1.0.0")
+
+    def test_uploading_over_a_released_repo_is_refused_before_building(
+        self, tmp_path, monkeypatch
+    ):
+        class FakeApi:
+            def __init__(self, token):
+                pass
+
+            def list_repo_files(self, repo_id, repo_type):
+                return ["README.md", "releases/v1.0.0.csv", "releases/v2.0.0.csv"]
+
+        monkeypatch.setattr("huggingface_hub.HfApi", FakeApi)
+        _snapshot(tmp_path, "biorxiv", {"train": ["a"], "test": ["b"]})
+        with pytest.raises(SystemExit, match="already has release v2.0.0"):
+            self._run(tmp_path, upload=True)
+        assert not (tmp_path / "output").exists()
+
+    def test_a_repo_not_on_the_hub_yet_is_not_refused(self, monkeypatch):
+        import httpx
+        from huggingface_hub.errors import RepositoryNotFoundError
+
+        class FakeApi:
+            def __init__(self, token):
+                pass
+
+            def list_repo_files(self, repo_id, repo_type):
+                request = httpx.Request("GET", "https://huggingface.co")
+                raise RepositoryNotFoundError(
+                    "no such repo", response=httpx.Response(404, request=request)
+                )
+
+        monkeypatch.setattr("huggingface_hub.HfApi", FakeApi)
+        build_cli.refuse_released("elifepathways/sciencebeam-dataset-biorxiv")
 
 
 class TestUploadWithRetry:
