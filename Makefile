@@ -191,7 +191,8 @@ corpus-create-repo:
 corpus-create-all-repos:
 	uv run -m sciencebeam_dataset_builder.corpus.create_repo_cli --all $(RUN_ARGS)
 
-# Build one corpus/tier's release from the real snapshot under DATA_DIR, locally only.
+# Build one corpus/tier's first release from the real snapshot under DATA_DIR, locally
+# only. Once a repo has a release, documents are added through the change UI instead.
 # CORPUS and TIER are required, e.g. `make corpus-build CORPUS=biorxiv TIER=open`.
 corpus-build:
 	uv run -m sciencebeam_dataset_builder.corpus.build_cli \

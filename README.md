@@ -210,3 +210,41 @@ assignment exactly.
 
 The default is 20 / 30 / 50 train / validation / test - most of the evaluation budget
 sits in `test`, with `train` deliberately small.
+
+## Changing the corpus repos
+
+The `elifepathways/sciencebeam-dataset-<corpus>[-restricted]` repos change only through
+reviewed pull requests on the repo itself, which touch `changes/` and nothing else. This
+repository is public, so no change file, verdict or document content is committed here.
+
+```sh
+make change-ui    # http://127.0.0.1:8765, with HF_TOKEN or the saved login
+```
+
+The page proposes four kinds of change, each as a Hub pull request:
+
+| change | file | release |
+| --- | --- | --- |
+| remove documents | `changes/removals/removals.yml` | major |
+| correct a document's XML | `changes/corrections/<id>/corrected.xml` and `correction.yml` | major |
+| correct its metadata | `changes/corrections/<id>/correction.yml` | patch |
+| add documents | `changes/additions/additions.yml` | minor |
+
+Documents are added from a fixed commit of `elifepathways/sciencebeam-v2-benchmarking`,
+or of the corpus's other repo to move one between them. The licence its own XML states
+decides which repo a document goes to, and it keeps the split it has there.
+`RUN_ARGS="--local-dir data/output/corpus-build"` previews against a local build, with
+submitting switched off.
+
+A merged pull request changes nothing in the dataset until a release applies it:
+
+```sh
+make corpus-change CORPUS=biorxiv TIER=open                          # what is pending
+make corpus-change CORPUS=biorxiv TIER=open RUN_ARGS="--version v2.0.0"           # write it
+make corpus-change CORPUS=biorxiv TIER=open RUN_ARGS="--version v2.0.0 --upload"  # send it
+```
+
+A release rewrites only the shards it changes, puts added documents in new shards after
+the existing ones and at the end of the release CSV, appends the ledger, and uploads as
+one commit that is read back and tagged. `make corpus-build` makes a repo's first release
+only, and refuses to upload over a repo that has one.
