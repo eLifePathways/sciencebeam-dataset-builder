@@ -4,6 +4,8 @@ A pull request only adds to `changes/`; nothing published changes until a releas
 applies it.
 """
 
+import difflib
+import re
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -34,6 +36,11 @@ if TYPE_CHECKING:
 TOOL_NOTE = "Proposed with the corpus change tool."
 
 CorrectionCheck = ContentCorrectionCheck | MetadataCorrectionCheck
+
+# Enough for a typical fix in a pull request description, well under what the Hub takes.
+MAX_DESCRIPTION_DIFF = 20_000
+
+_BACKTICKS = re.compile(r"`+")
 
 
 class ProposalError(RuntimeError):
@@ -144,6 +151,8 @@ def submit_correction(check: CorrectionCheck) -> Submission:
                 f"failed: {exc}. Close it and submit again."
             ) from exc
     _verify(api, reader.repo_id, info, fix)
+    if proposal.seed is not None:
+        _retitle(api, reader.repo_id, info, title)
     return Submission(reader.repo_id, info.pr_num, info.pr_url, title)
 
 
@@ -286,12 +295,18 @@ def correction_description(check: CorrectionCheck) -> str:
         ]
     else:
         kept, files = "XML", f"`{paths.corrected}`, `{paths.metadata}`"
+        before = (
+            proposal.seed if proposal.seed is not None else proposal.corrected_before
+        )
         body = [
             "The first commit is the XML as harvested and the second is the fix, so the "
-            "second commit's diff is exactly the correction."
+            "second commit's diff is exactly the correction. The pull request's own "
+            "diff shows the whole file as new; the correction is below."
             if proposal.seed is not None
             else "This document has been corrected before, so the diff is against its "
             "last proposed correction.",
+            "",
+            *_diff_block(before or "", proposal.corrected_after or ""),
             "",
             "**Validation:** the XML parses, and keeps the document's root element, DOI "
             "and licence statement. Nothing else is pending on `main` or open for this "
@@ -319,6 +334,50 @@ def correction_description(check: CorrectionCheck) -> str:
             *(f"\n**Warning:** {warning}" for warning in check.warnings),
         ]
     )
+
+
+def xml_diff(before: str, after: str) -> list[str]:
+    """Unified diff lines, with lines broken between adjacent tags first, so a JATS
+    file held on one line still shows what moved rather than one line for another."""
+    return [
+        line
+        for line in difflib.unified_diff(
+            _tag_lines(before), _tag_lines(after), "current", "corrected", lineterm=""
+        )
+        if not line.startswith(("---", "+++"))
+    ]
+
+
+def _tag_lines(xml: str) -> list[str]:
+    return xml.replace("><", ">\n<").splitlines()
+
+
+def _diff_block(before: str, after: str) -> list[str]:
+    """The XML diff as a fenced block, cut short where it would crowd the page."""
+    lines, size = [], 0
+    diff = xml_diff(before, after)
+    for line in diff:
+        size += len(line) + 1
+        if size > MAX_DESCRIPTION_DIFF:
+            break
+        lines.append(line)
+    text = "\n".join(lines)
+    fence = "`" * max([3, *(len(m) + 1 for m in _BACKTICKS.findall(text))])
+    cut = len(diff) - len(lines)
+    return [
+        "**What changes in the XML** (lines broken between tags):",
+        "",
+        f"{fence}diff",
+        text,
+        fence,
+        *(
+            [
+                f"*{cut} more line{'' if cut == 1 else 's'} not shown: see the commit's diff.*"
+            ]
+            if cut
+            else []
+        ),
+    ]
 
 
 def _value(value: str | None) -> str:
@@ -386,6 +445,18 @@ def _open(
     if info.pr_num is None or not info.pr_url:
         raise ProposalError("the Hub made a commit but opened no pull request")
     return info
+
+
+def _retitle(api: "HfApi", repo_id: str, info: Any, title: str) -> None:
+    """A pull request takes its first commit's message as its title, and a first
+    correction's first commit is the XML as harvested."""
+    try:
+        api.rename_discussion(repo_id, info.pr_num, title, repo_type="dataset")
+    except Exception as exc:  # noqa: BLE001 - Hub calls fail in varied ways
+        raise ProposalError(
+            f"opened {info.pr_url} with the original XML and the fix, but could not "
+            f"rename it to {title!r}: {exc}. Rename it on the Hub."
+        ) from exc
 
 
 def _verify(api: "HfApi", repo_id: str, info: Any, sent: Mapping[str, bytes]) -> None:

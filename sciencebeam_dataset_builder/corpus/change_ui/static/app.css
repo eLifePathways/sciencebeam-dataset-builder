@@ -253,6 +253,12 @@ pre.diff .hunk { color: var(--muted); }
 
 .confirm { display: flex; gap: 10px; align-items: flex-start; margin-top: 20px; font-weight: 400; }
 .confirm input { margin-top: 4px; }
+/* The pull request button waits for the review to be confirmed. The server refuses an
+   unconfirmed submission too, for a button reached from the keyboard. */
+form:has(input[name="confirm"]:not(:checked)) .actions button.primary {
+  opacity: 0.5;
+  pointer-events: none;
+}
 .notice { padding: 10px 14px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); }
 
 .outcomes { margin: 0; padding: 0; list-style: none; }
