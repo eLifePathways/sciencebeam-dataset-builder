@@ -231,11 +231,21 @@ proposes four kinds of change, each as a Hub pull request:
 | correct its metadata | `changes/corrections/<id>/correction.yml` | patch |
 | add documents | `changes/additions/additions.yml` | minor |
 
+XML corrections can also go in bulk: upload files named `<uid>.xml` with one reason, or a
+`uid,reason` CSV for reasons of their own. Each document is checked on its own, and those in one
+repo become one pull request.
+
 Documents are added from a fixed commit of `elifepathways/sciencebeam-v2-benchmarking`,
 or of the corpus's other repo to move one between them. The licence its own XML states
 decides which repo a document goes to, and it keeps the split it has there.
 `RUN_ARGS="--local-dir data/output/corpus-build"` previews against a local build, with
 submitting switched off.
+
+The Hub merges a pull request by squashing it into one commit on `main`; there is no other merge
+method. A document's first content correction is two commits, the XML as harvested and then the
+fix, so on `main` it arrives as the whole of `corrected.xml`. Review the fix in the pull request:
+its description shows the diff, and so does its second commit. Leave a merged pull request's ref
+in place - **Delete ref** removes those commits for good.
 
 A merged pull request changes nothing in the dataset until a release applies it:
 

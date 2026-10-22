@@ -13,6 +13,7 @@ from sciencebeam_dataset_builder.corpus.validate import (
     ContentCorrectionCheck,
     MetadataCorrectionCheck,
     check_content_correction,
+    check_content_corrections,
     check_metadata_correction,
     current_metadata,
 )
@@ -360,3 +361,53 @@ class TestMetadataCorrection:
             "removal is already pending" in e
             for e in _metadata(repo, pub_date="2022").errors
         )
+
+
+class TestABatch:
+    """Several documents checked together, each on its own."""
+
+    def _batch(self, repos, *items):
+        return check_content_corrections(
+            [(q, REASON, x.encode()) for q, x in items], repos, "hazal"
+        )
+
+    def test_each_document_is_checked_on_its_own(self, repo):
+        good, bad = self._batch(
+            [repo], ("a", FIXED), ("b", jats(doi="10.1/other", title="New"))
+        )
+        assert good.ok and good.proposal is not None
+        assert any("not the document's 10.1/b" in e for e in bad.errors)
+
+    def test_a_document_listed_twice_is_refused_the_second_time(self, repo):
+        first, second = self._batch([repo], ("a", FIXED), ("biorxiv__a", FIXED))
+        assert first.ok
+        assert second.errors == ("listed more than once",)
+
+    def test_documents_in_different_repos_each_find_theirs(self, tmp_path, repo):
+        ore = jats(doi="10.1/o")
+        other = publish(
+            tmp_path, CORPORA["ore"], Tier.OPEN, {"train": ["o"]}, xml={"o": ore}
+        )
+        checks = self._batch(
+            [repo, other], ("a", FIXED), ("o", jats(doi="10.1/o", title="New"))
+        )
+        assert [c.proposal.repo.repo_id for c in checks if c.proposal] == [
+            repo.repo_id,
+            other.repo_id,
+        ]
+
+    def test_a_shard_is_read_once_for_all_its_documents(self, repo, monkeypatch):
+        reads: list[str] = []
+        read_columns = type(repo.reader).read_columns
+
+        def counted(self, path, columns):
+            if "xml" in columns:
+                reads.append(path)
+            return read_columns(self, path, columns)
+
+        monkeypatch.setattr(type(repo.reader), "read_columns", counted)
+        checks = self._batch(
+            [repo], ("a", FIXED), ("b", jats(doi="10.1/b", title="New"))
+        )
+        assert all(c.ok for c in checks)
+        assert len(reads) == 1

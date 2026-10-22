@@ -33,6 +33,7 @@ from sciencebeam_dataset_builder.corpus.ledger import (
 from sciencebeam_dataset_builder.corpus.lookup import (
     Location,
     Repo,
+    Result,
     Status,
     lookup,
 )
@@ -252,10 +253,47 @@ def check_content_correction(
     A correction already merged but not yet released does not block another: the new
     one is checked against it and replaces it.
     """
+    [check] = check_content_corrections([(query, reason, xml)], repos, changed_by)
+    return check
+
+
+def check_content_corrections(
+    items: Sequence[tuple[str, str, bytes]], repos: Sequence[Repo], changed_by: str
+) -> list[ContentCorrectionCheck]:
+    """Check each `(query, reason, xml)`, one document at a time, sharing the reads: one
+    lookup for all of them, and each repo's change files and each shard's XML once.
+    """
     if not changed_by.strip():
         raise ValueError("changed_by is blank")
-    reason = reason.strip()
-    [result] = lookup([query], repos)
+    results = lookup([query for query, _, _ in items], repos)
+    batch = _Batch(changed_by)
+    return [
+        _check_content(query, reason.strip(), xml, result, batch)
+        for (query, reason, xml), result in zip(items, results, strict=True)
+    ]
+
+
+@dataclass
+class _Batch:
+    """What a batch of checks reads once and shares."""
+
+    changed_by: str
+    changes: dict[str, _Changes] = field(default_factory=dict)
+    shards: dict[tuple[str, str], dict[str, tuple[str, str | None]]] = field(
+        default_factory=dict
+    )
+    seen: set[tuple[str, str]] = field(default_factory=set)
+
+    def changes_of(self, repo: Repo) -> _Changes:
+        if repo.repo_id not in self.changes:
+            self.changes[repo.repo_id] = _load(repo)
+        return self.changes[repo.repo_id]
+
+
+def _check_content(
+    query: str, reason: str, xml: bytes, result: Result, batch: _Batch
+) -> ContentCorrectionCheck:
+    changed_by = batch.changed_by
     if result.status is not Status.FOUND:
         return ContentCorrectionCheck(
             query,
@@ -267,8 +305,14 @@ def check_content_correction(
             (f"{result.status.value}: {result.detail}",),
         )
     location = result.locations[0]
+    key = (location.repo.repo_id, location.id)
+    if key in batch.seen:
+        return ContentCorrectionCheck(
+            query, reason, location, None, None, "", ("listed more than once",)
+        )
+    batch.seen.add(key)
     errors = [] if reason else ["a reason is required"]
-    changes = _load(location.repo)
+    changes = batch.changes_of(location.repo)
     paths = layout.correction_paths(location.id)
     try:
         if changes.error:
@@ -279,7 +323,7 @@ def check_content_correction(
             if paths.corrected in changes.files
             else None
         )
-        shipped, upstream = _row_xml(location)
+        shipped, upstream = _row_xml(location, batch.shards)
     except _READ_ERRORS as exc:
         return ContentCorrectionCheck(
             query, reason, location, None, None, "", (*errors, str(exc))
@@ -554,20 +598,30 @@ def open_conflicts(
     return errors
 
 
-def _row_xml(location: Location) -> tuple[str, str | None]:
-    """The document's `xml` and `xml_upstream`, read from its shard without its PDF."""
-    table = location.repo.reader.read_columns(
-        location.shard, ("id", "xml", "xml_upstream")
-    )
-    for id_value, xml, upstream in zip(
-        table.column("id").to_pylist(),
-        table.column("xml").to_pylist(),
-        table.column("xml_upstream").to_pylist(),
-        strict=True,
-    ):
-        if id_value == location.id:
-            return xml, upstream
-    raise RepoReadError(f"{location.id} is not in {location.shard}")
+def _row_xml(
+    location: Location,
+    shards: dict[tuple[str, str], dict[str, tuple[str, str | None]]] | None = None,
+) -> tuple[str, str | None]:
+    """The document's `xml` and `xml_upstream`, read from its shard without its PDF;
+    each shard once when `shards` is shared."""
+    shards = {} if shards is None else shards
+    key = (location.repo.repo_id, location.shard)
+    if key not in shards:
+        table = location.repo.reader.read_columns(
+            location.shard, ("id", "xml", "xml_upstream")
+        )
+        shards[key] = {
+            id_value: (xml, upstream)
+            for id_value, xml, upstream in zip(
+                table.column("id").to_pylist(),
+                table.column("xml").to_pylist(),
+                table.column("xml_upstream").to_pylist(),
+                strict=True,
+            )
+        }
+    if location.id not in shards[key]:
+        raise RepoReadError(f"{location.id} is not in {location.shard}")
+    return shards[key][location.id]
 
 
 def _check_xml(

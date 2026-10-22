@@ -20,6 +20,7 @@ from sciencebeam_dataset_builder.corpus.repo_reader import (
 )
 from sciencebeam_dataset_builder.corpus.validate import (
     ContentCorrectionCheck,
+    CorrectionProposal,
     MetadataCorrectionCheck,
     RemovalCheck,
     RemovalProposal,
@@ -39,6 +40,8 @@ CorrectionCheck = ContentCorrectionCheck | MetadataCorrectionCheck
 
 # Enough for a typical fix in a pull request description, well under what the Hub takes.
 MAX_DESCRIPTION_DIFF = 20_000
+# The Hub refuses a comment, and so a description, of 65,536 characters or more.
+MAX_DESCRIPTION = 60_000
 
 _BACKTICKS = re.compile(r"`+")
 
@@ -123,18 +126,73 @@ def submit_correction(check: CorrectionCheck) -> Submission:
         raise ProposalError("only a correction that passed its checks can be proposed")
     reader = _hub_reader(proposal.repo.reader, proposal.repo.repo_id)
     _recheck(reader, lambda prs: open_conflicts(proposal.id, prs, removing=False))
-    paths = layout.correction_paths(proposal.id)
-    fix = {paths.metadata: proposal.metadata_after.encode("utf-8")}
-    if proposal.corrected_after is not None:
-        fix[paths.corrected] = proposal.corrected_after.encode("utf-8")
+    seed, fix = _correction_files([proposal])
+    return _open_correction(
+        reader, seed, fix, correction_title(check), correction_description(check)
+    )
+
+
+def submit_corrections(checks: Sequence[ContentCorrectionCheck]) -> Submission:
+    """Open one pull request for one repo's checked content corrections.
+
+    Documents corrected for the first time have their XML as harvested committed first,
+    then every fix in a second commit, so that commit's diff is exactly the corrections.
+    """
+    proposals = [c.proposal for c in checks if c.ok and c.proposal is not None]
+    if not proposals or len(proposals) != len(checks):
+        raise ProposalError("only corrections that passed their checks can be proposed")
+    if len({p.repo.repo_id for p in proposals}) != 1:
+        raise ProposalError("one pull request holds one repo's corrections")
+    if len(checks) == 1:
+        return submit_correction(checks[0])
+    reader = _hub_reader(proposals[0].repo.reader, proposals[0].repo.repo_id)
+    _recheck(
+        reader,
+        lambda prs: [
+            error
+            for p in proposals
+            for error in open_conflicts(p.id, prs, removing=False)
+        ],
+    )
+    seed, fix = _correction_files(proposals)
+    return _open_correction(
+        reader, seed, fix, corrections_title(checks), corrections_description(checks)
+    )
+
+
+def _correction_files(
+    proposals: Sequence[CorrectionProposal],
+) -> tuple[dict[str, bytes], dict[str, bytes]]:
+    """The originals to commit first, and the fixes."""
+    seed: dict[str, bytes] = {}
+    fix: dict[str, bytes] = {}
+    for proposal in proposals:
+        paths = layout.correction_paths(proposal.id)
+        fix[paths.metadata] = proposal.metadata_after.encode("utf-8")
+        if proposal.corrected_after is not None:
+            fix[paths.corrected] = proposal.corrected_after.encode("utf-8")
+        if proposal.seed is not None:
+            seed[paths.corrected] = proposal.seed.encode("utf-8")
+    return seed, fix
+
+
+def _open_correction(
+    reader: HubRepo,
+    seed: Mapping[str, bytes],
+    fix: Mapping[str, bytes],
+    title: str,
+    description: str,
+) -> Submission:
+    """One commit of fixes, or the originals then the fixes, read back and titled."""
     api = _api(reader)
-    title = correction_title(check)
-    description = correction_description(check)
-    if proposal.seed is None:
+    if not seed:
         info = _open(api, reader, fix, title, description)
     else:
-        seed = {paths.corrected: proposal.seed.encode("utf-8")}
-        message = f"Start {paths.corrected} from the XML as harvested"
+        message = (
+            f"Start {next(iter(seed))} from the XML as harvested"
+            if len(seed) == 1
+            else f"Start {len(seed)} corrected.xml files from the XML as harvested"
+        )
         info = _open(api, reader, seed, message, description)
         try:
             api.create_commit(
@@ -151,7 +209,7 @@ def submit_correction(check: CorrectionCheck) -> Submission:
                 f"failed: {exc}. Close it and submit again."
             ) from exc
     _verify(api, reader.repo_id, info, fix)
-    if proposal.seed is not None:
+    if seed:
         _retitle(api, reader.repo_id, info, title)
     return Submission(reader.repo_id, info.pr_num, info.pr_url, title)
 
@@ -336,6 +394,94 @@ def correction_description(check: CorrectionCheck) -> str:
     )
 
 
+def corrections_title(checks: Sequence[ContentCorrectionCheck]) -> str:
+    proposal = checks[0].proposal
+    assert proposal is not None
+    return f"Correct {len(checks)} documents in {_repo_name(proposal.repo.repo_id)}"
+
+
+def corrections_description(checks: Sequence[ContentCorrectionCheck]) -> str:
+    """The batch's documents first, then each one's diff from what is left of the
+    Hub's length limit, so a long diff never pushes another document out."""
+    first = checks[0]
+    assert first.proposal is not None and first.location is not None
+    assert first.correction is not None
+    repo = first.proposal.repo
+    commit = repo.reader.commit if isinstance(repo.reader, HubRepo) else ""
+    seeded = sum(c.proposal is not None and c.proposal.seed is not None for c in checks)
+    reading = []
+    if seeded:
+        reading.append(
+            f"{seeded} of them are corrected for the first time: the first commit is "
+            "their XML as harvested and the second is every fix, so the second commit's "
+            "diff is exactly the corrections. The pull request's own diff shows those "
+            "files as new; each correction is below."
+        )
+    if seeded < len(checks):
+        reading.append(
+            "The others have been corrected before, so their diffs are against their "
+            "last proposed correction."
+        )
+    rows = []
+    for check in checks:
+        where, correction = check.location, check.correction
+        assert where is not None and correction is not None
+        rows.append(
+            f"| `{_cell(where.id)}` | {where.split} | {where.parquet_file_name} "
+            f"| {correction.local_change_id} | {_cell(correction.change_reason)} |"
+        )
+    head = "\n".join(
+        [
+            f"{TOOL_NOTE} Merging records these {len(checks)} corrections on `main`; "
+            "the dataset keeps the current XML until a release applies them.",
+            "",
+            "- **Change type:** content-corrected",
+            f"- **Repo:** `{repo.repo_id}` (corpus `{repo.corpus.name}`, "
+            f"{repo.tier.value})",
+            f"- **Checked against:** release `{first.location.release}`, commit "
+            f"`{commit[:12]}`",
+            f"- **Submitted by:** {first.correction.changed_by}",
+            "- **Files changed:** `corrected.xml` and `correction.yml` in "
+            "`changes/corrections/<id>/` for each document",
+            "",
+            *(line for text in reading for line in (text, "")),
+            "| id | split | shard | local_change_id | reason |",
+            "| --- | --- | --- | ---: | --- |",
+            *rows,
+            "",
+            "**Validation:** each XML parses, and keeps its document's root element, DOI "
+            "and licence statement. Nothing else is pending on `main` or open for these "
+            "documents.",
+        ]
+    )
+    left = MAX_DESCRIPTION - len(head)
+    sections = []
+    for n, check in enumerate(checks):
+        proposal = check.proposal
+        assert proposal is not None
+        before = (
+            proposal.seed if proposal.seed is not None else proposal.corrected_before
+        )
+        share = min(MAX_DESCRIPTION_DIFF, left // (len(checks) - n)) - 200
+        section = "\n".join(
+            [
+                "",
+                f"### `{_cell(proposal.id)}`",
+                "",
+                *_diff_block(
+                    before or "",
+                    proposal.corrected_after or "",
+                    max(share, 0),
+                    heading=False,
+                ),
+                *(f"\n**Warning:** {_cell(w)}" for w in check.warnings),
+            ]
+        )
+        left -= len(section)
+        sections.append(section)
+    return head + "\n" + "\n".join(sections)
+
+
 def xml_diff(before: str, after: str) -> list[str]:
     """Unified diff lines, with lines broken between adjacent tags first, so a JATS
     file held on one line still shows what moved rather than one line for another."""
@@ -352,21 +498,27 @@ def _tag_lines(xml: str) -> list[str]:
     return xml.replace("><", ">\n<").splitlines()
 
 
-def _diff_block(before: str, after: str) -> list[str]:
-    """The XML diff as a fenced block, cut short where it would crowd the page."""
+def _diff_block(
+    before: str, after: str, limit: int | None = None, *, heading: bool = True
+) -> list[str]:
+    """The XML diff as a fenced block, cut short at `limit` characters."""
+    limit = MAX_DESCRIPTION_DIFF if limit is None else limit
     lines, size = [], 0
     diff = xml_diff(before, after)
     for line in diff:
         size += len(line) + 1
-        if size > MAX_DESCRIPTION_DIFF:
+        if size > limit:
             break
         lines.append(line)
     text = "\n".join(lines)
     fence = "`" * max([3, *(len(m) + 1 for m in _BACKTICKS.findall(text))])
     cut = len(diff) - len(lines)
     return [
-        "**What changes in the XML** (lines broken between tags):",
-        "",
+        *(
+            ["**What changes in the XML** (lines broken between tags):", ""]
+            if heading
+            else []
+        ),
         f"{fence}diff",
         text,
         fence,
