@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from sciencebeam_dataset_builder.corpus import layout
+from sciencebeam_dataset_builder.corpus.lookup import Location
 from sciencebeam_dataset_builder.corpus.repo_reader import (
     HubRepo,
     PullRequest,
@@ -212,6 +213,51 @@ def _open_correction(
     if seed:
         _retitle(api, reader.repo_id, info, title)
     return Submission(reader.repo_id, info.pr_num, info.pr_url, title)
+
+
+def already_open(documents: Sequence[tuple[Location, bytes]]) -> list[Submission]:
+    """The open pull requests that already hold each of these corrected files, as a
+    repeated submission finds them; none unless every one of them is held."""
+    found: dict[tuple[str, int], Submission] = {}
+    prs_of: dict[str, list[PullRequest]] = {}
+    for location, data in documents:
+        reader = location.repo.reader
+        if not isinstance(reader, HubRepo):
+            return []
+        try:
+            text = data.decode("utf-8-sig")
+            if reader.repo_id not in prs_of:
+                now = HubRepo(reader.repo_id, reader.revision, reader.token)
+                prs_of[reader.repo_id] = now.open_pull_requests()
+        except (UnicodeDecodeError, RepoReadError):
+            return []
+        path = layout.correction_paths(location.id).corrected
+        api = _api(reader)
+        holding = next(
+            (
+                pr
+                for pr in prs_of[reader.repo_id]
+                if path in pr.files
+                and _read_back(api, reader.repo_id, pr.num, path) == text
+            ),
+            None,
+        )
+        if holding is None:
+            return []
+        found[(reader.repo_id, holding.num)] = Submission(
+            reader.repo_id, holding.num, holding.url, holding.title
+        )
+    return list(found.values())
+
+
+def _read_back(api: "HfApi", repo_id: str, num: int, path: str) -> str | None:
+    try:
+        local = api.hf_hub_download(
+            repo_id, path, repo_type="dataset", revision=f"refs/pr/{num}"
+        )
+        return Path(str(local)).read_bytes().decode("utf-8")
+    except Exception:  # noqa: BLE001 - Hub calls fail in varied ways
+        return None
 
 
 def removal_title(proposal: RemovalProposal) -> str:

@@ -11,7 +11,7 @@
 </p>
 {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
 
-<form method="post" action="/corrections/content/bulk/submit">
+<form method="post" action="/corrections/content/bulk/submit" {{ m.submit_once() }}>
   {{ m.csrf_field() }}
   {% for c in carried %}
   <input type="hidden" name="uid" value="{{ c.uid }}">
@@ -90,6 +90,8 @@
     <span>I have reviewed these corrections. Open {{ prs }} pull request{{ '' if prs == 1 else 's' }}
       for review. The documents keep their current XML until a release applies the change.</span>
   </label>
+
+  {{ m.sending_note() }}
 
   <div class="actions">
     <button class="primary" {% if not (all_pass and prs and can_submit) %}disabled{% endif %}>

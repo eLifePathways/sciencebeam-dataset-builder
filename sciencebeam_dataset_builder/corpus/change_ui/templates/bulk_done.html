@@ -2,14 +2,15 @@
 {% import "macros.html" as m with context %}
 {% block content %}
 <h2>{{ "Submitted for review" if all_ok else "Only partly submitted" }}</h2>
-<p class="lead">Each pull request needs a reviewer to merge it. The documents keep their current
+<p class="lead">{% if outcomes and outcomes[0].already %}These corrections were submitted
+  already, as the pull requests below. {% endif %}Each pull request needs a reviewer to merge it. The documents keep their current
   XML until a release applies the change.</p>
 
 <ul class="outcomes">
   {% for o in outcomes %}
   <li>
     {% if o.ok %}
-    {{ m.badge("ok", "Opened") }} <strong>{{ o.repo_id }}</strong> ·
+    {{ m.badge("ok", "Already open" if o.already else "Opened") }} <strong>{{ o.repo_id }}</strong> ·
     <a href="{{ o.pr_url }}" target="_blank" rel="noopener">Pull request #{{ o.pr_num }}</a>
     <span class="hint">{{ o.title }}</span>
     {% else %}

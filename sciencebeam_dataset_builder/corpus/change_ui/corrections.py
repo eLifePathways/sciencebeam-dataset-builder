@@ -26,6 +26,7 @@ from sciencebeam_dataset_builder.corpus.change_ui.pages import (
 from sciencebeam_dataset_builder.corpus.lookup import Location, Repo, Status, lookup
 from sciencebeam_dataset_builder.corpus.proposal import (
     ProposalError,
+    already_open,
     submit_correction,
     xml_diff,
 )
@@ -227,6 +228,25 @@ def routes(pages: Pages, repos: Callable[[], Sequence[Repo]]) -> APIRouter:
                 status_code=400,
             )
         if not result.ok:
+            opened = (
+                await run_in_threadpool(already_open, [(result.location, xml)])
+                if result.location
+                else []
+            )
+            if opened:
+                return pages.render(
+                    request,
+                    "correction_done.html",
+                    STEPS,
+                    "done",
+                    ok=True,
+                    already=True,
+                    kept="XML",
+                    repo_id=opened[0].repo_id,
+                    pr_num=opened[0].pr_num,
+                    pr_url=safe_url(opened[0].pr_url),
+                    title=opened[0].title,
+                )
             return review(
                 request,
                 result,
