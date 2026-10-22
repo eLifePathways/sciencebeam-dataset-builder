@@ -10,7 +10,7 @@
   or go back and fix them, before submitting.{% endif -%}
 </p>
 
-<form method="post" action="/removals/submit">
+<form method="post" action="/removals/submit" {{ m.submit_once() }}>
   {{ m.csrf_field() }}
   {{ m.carry(draft) }}
   {% for p in proposals %}
@@ -81,6 +81,8 @@
     <span>I have reviewed these removals. Open {{ prs }} pull request{{ '' if prs == 1 else 's' }}
       for review. The documents stay in the dataset until a release applies the change.</span>
   </label>
+
+  {{ m.sending_note() }}
 
   <div class="actions">
     <button class="primary" {% if not (all_pass and prs and can_submit) %}disabled{% endif %}>

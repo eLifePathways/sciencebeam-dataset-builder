@@ -16,7 +16,7 @@ from sciencebeam_dataset_builder.corpus.layout import Tier
 from sciencebeam_dataset_builder.corpus.lookup import Repo
 from sciencebeam_dataset_builder.corpus.registry import CORPORA
 from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo
-from tests.corpus._fake_hub import FakeHub
+from tests.corpus._fake_hub import FakeHub, FakePullRequest
 from tests.corpus._repos import jats, publish, root_of, write_file
 
 BIORXIV = CORPORA["biorxiv"]
@@ -161,6 +161,19 @@ class TestSubmit:
         )
         assert "Submitted for review" in page.text
         assert "Pull request #100" in page.text
+        assert len(hub.opened) == 2
+
+    def test_a_repeated_submission_shows_the_pull_request_already_open(
+        self, hub, client
+    ):
+        """A second press, or Back and submit again, finds its own pull request."""
+        data = _reviewed(_upload(client).text)
+        _post(client, "/corrections/content/submit", data)
+        hub.pull_requests = [
+            FakePullRequest(100, "Correct a", dict(hub.opened[-1]["files"]))
+        ]
+        again = _post(client, "/corrections/content/submit", data).text
+        assert "submitted already" in again and "Pull request #100" in again
         assert len(hub.opened) == 2
 
     def test_nothing_is_opened_without_the_confirmation(self, hub, client):

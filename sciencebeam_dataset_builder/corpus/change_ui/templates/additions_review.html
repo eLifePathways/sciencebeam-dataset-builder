@@ -10,7 +10,7 @@
   or go back and fix them, before submitting.{% endif -%}
 </p>
 
-<form method="post" action="/additions/submit">
+<form method="post" action="/additions/submit" {{ m.submit_once() }}>
   {{ m.csrf_field() }}
   {{ m.carry_from(source) }}
   {{ m.carry(draft) }}
@@ -85,6 +85,8 @@
     <span>I have reviewed these additions. Open {{ prs }} pull request{{ '' if prs == 1 else 's' }}
       for review. The documents join the dataset when a release applies the change.</span>
   </label>
+
+  {{ m.sending_note() }}
 
   <div class="actions">
     <button class="primary" {% if not (all_pass and prs and can_submit) %}disabled{% endif %}>

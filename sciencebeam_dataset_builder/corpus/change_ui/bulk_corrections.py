@@ -35,6 +35,8 @@ from sciencebeam_dataset_builder.corpus.change_ui.pages import (
 from sciencebeam_dataset_builder.corpus.lookup import Repo
 from sciencebeam_dataset_builder.corpus.proposal import (
     ProposalError,
+    Submission,
+    already_open,
     submit_corrections,
     xml_diff,
 )
@@ -195,6 +197,20 @@ def routes(pages: Pages, repos: Callable[[], Sequence[Repo]]) -> APIRouter:
             check_content_corrections, batch.items(), repos(), user
         )
         if not all(c.ok for c in checks):
+            opened = await run_in_threadpool(
+                already_open,
+                [(c.location, batch.files[c.query]) for c in checks if c.location],
+            )
+            if opened and all(c.location for c in checks):
+                return pages.render(
+                    request,
+                    "bulk_done.html",
+                    STEPS,
+                    "done",
+                    carried=[],
+                    outcomes=[_outcome(s, already=True) for s in opened],
+                    all_ok=True,
+                )
             return await review(
                 request,
                 batch,
@@ -295,13 +311,17 @@ def _submit(repo_id: str, checks: Sequence[ContentCorrectionCheck]) -> dict[str,
         submission = submit_corrections(checks)
     except ProposalError as exc:
         return {"repo_id": repo_id, "ok": False, "error": str(exc)}
+    return _outcome(submission)
+
+
+def _outcome(submission: Submission, *, already: bool = False) -> dict[str, Any]:
     return {
-        "repo_id": repo_id,
+        "repo_id": submission.repo_id,
         "ok": True,
+        "already": already,
         "pr_num": submission.pr_num,
         "pr_url": safe_url(submission.pr_url),
         "title": submission.title,
-        "count": len(checks),
     }
 
 

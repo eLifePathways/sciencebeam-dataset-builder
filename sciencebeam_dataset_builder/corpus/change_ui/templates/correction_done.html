@@ -3,11 +3,12 @@
 {% block content %}
 {% if ok %}
 <h2>Submitted for review</h2>
-<p class="lead">The pull request needs a reviewer to merge it. The document keeps its current
+<p class="lead">{% if already %}This correction was submitted already, as the pull request
+  below. {% endif %}The pull request needs a reviewer to merge it. The document keeps its current
   {{ kept }} until the next release after that.</p>
 <ul class="outcomes">
   <li>
-    {{ m.badge("ok", "Opened") }} <strong>{{ repo_id }}</strong> ·
+    {{ m.badge("ok", "Already open" if already else "Opened") }} <strong>{{ repo_id }}</strong> ·
     <a href="{{ pr_url }}" target="_blank" rel="noopener">Pull request #{{ pr_num }}</a>
     <span class="hint">{{ title }}</span>
   </li>

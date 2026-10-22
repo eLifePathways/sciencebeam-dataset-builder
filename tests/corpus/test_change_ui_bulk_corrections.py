@@ -15,7 +15,7 @@ from sciencebeam_dataset_builder.corpus.layout import Tier
 from sciencebeam_dataset_builder.corpus.lookup import Repo
 from sciencebeam_dataset_builder.corpus.registry import CORPORA
 from sciencebeam_dataset_builder.corpus.repo_reader import HubRepo
-from tests.corpus._fake_hub import FakeHub
+from tests.corpus._fake_hub import FakeHub, FakePullRequest
 from tests.corpus._repos import jats, publish, root_of
 
 BIORXIV = CORPORA["biorxiv"]
@@ -116,6 +116,10 @@ class TestFiles:
         again = _post(preview, CHECK, [*_carried(page), ("leave_out", "biorxiv__zz")])
         assert "The document can be" in again.text
 
+    def test_the_open_button_is_pressed_once(self, preview):
+        page = _upload(preview, "biorxiv__a").text
+        assert "onsubmit=" in page and "sending-note" in page
+
     def test_a_preview_cannot_submit(self, preview):
         page = _upload(preview, "biorxiv__a").text
         response = _post(preview, SUBMIT, [*_carried(page), ("confirm", "yes")])
@@ -144,6 +148,29 @@ class TestSubmit:
             layout.correction_paths(i).corrected for i in ("a", "b")
         }
         assert len(fix["files"]) == 4
+
+    def test_a_repeated_submission_shows_the_pull_request_already_open(
+        self, hub, client
+    ):
+        """A second press, or Back and submit again, finds its own pull request."""
+        page = _upload(client, "biorxiv__a", "biorxiv__b").text
+        data = [*_carried(page), ("confirm", "yes")]
+        _post(client, SUBMIT, data)
+        hub.pull_requests = [
+            FakePullRequest(100, "Correct 2 documents", dict(hub.opened[-1]["files"]))
+        ]
+        again = _post(client, SUBMIT, data).text
+        assert "Already open" in again and "Pull request #100" in again
+        assert len(hub.opened) == 2
+
+    def test_an_open_pull_request_with_other_xml_still_stops_it(self, hub, client):
+        page = _upload(client, "biorxiv__a").text
+        path = layout.correction_paths("a").corrected
+        hub.pull_requests = [FakePullRequest(7, "Correct a", {path: b"<article/>"})]
+        response = _post(client, SUBMIT, [*_carried(page), ("confirm", "yes")])
+        assert response.status_code == 409
+        assert "open pull request #7" in response.text
+        assert hub.opened == []
 
     def test_what_changed_since_the_review_is_not_submitted(self, hub, client):
         page = _upload(client, "biorxiv__a").text

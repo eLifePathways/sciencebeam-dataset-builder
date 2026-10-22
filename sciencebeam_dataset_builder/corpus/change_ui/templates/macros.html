@@ -19,6 +19,17 @@
 <input type="hidden" name="from_commit" value="{{ source.commit }}">
 {%- endmacro %}
 
+{# Opening a pull request takes a while: one press only, and say so. The server refuses a
+   repeated submission either way. #}
+{% macro submit_once() -%}
+onsubmit="if (event.submitter &amp;&amp; event.submitter.classList.contains('primary')) { event.submitter.disabled = true; this.classList.add('sending'); }"
+{%- endmacro %}
+
+{% macro sending_note() -%}
+<p class="notice sending-note" role="status">Opening the pull request. This can take a minute:
+  keep this page open.</p>
+{%- endmacro %}
+
 {% macro badge(kind, text=none) -%}
 <span class="badge {{ kind }}">{{ text or kind }}</span>
 {%- endmacro %}
