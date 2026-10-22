@@ -15,12 +15,17 @@ from starlette.datastructures import FormData
 from sciencebeam_dataset_builder.corpus.change_ui.forms import MAX_DOCUMENTS, MAX_REASON
 from sciencebeam_dataset_builder.corpus.lookup import Location
 from sciencebeam_dataset_builder.corpus.proposal import ProposalError
-from sciencebeam_dataset_builder.corpus.validate import CorrectionProposal
+from sciencebeam_dataset_builder.corpus.validate import (
+    MAX_XML_BYTES,
+    CorrectionProposal,
+)
 
 HERE = Path(__file__).parent
 
 # A uid and a reason per document, plus a digest per repo and the request's own fields.
 MAX_FIELDS = 2 * MAX_DOCUMENTS + 64
+# An uploaded XML is carried to the next page base64 encoded, a third larger.
+MAX_PART_BYTES = MAX_XML_BYTES * 4 // 3 + 4096
 
 Steps = tuple[tuple[str, str], ...]
 
@@ -83,8 +88,10 @@ class Pages:
             status_code=status_code,
         )
 
-    async def form(self, request: Request) -> FormData:
-        data = await request.form(max_files=1, max_fields=MAX_FIELDS)
+    async def form(self, request: Request, *, max_files: int = 1) -> FormData:
+        data = await request.form(
+            max_files=max_files, max_fields=MAX_FIELDS, max_part_size=MAX_PART_BYTES
+        )
         if not secrets.compare_digest(text(data.get("csrf")), self.csrf):
             raise PageError(
                 403, "This page has expired. Start again from the first page."

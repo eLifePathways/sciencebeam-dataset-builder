@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% import "macros.html" as m with context %}
+{% block content %}
+{% set prs = repos | length %}
+<h2>Check and review</h2>
+<p class="lead">
+  {%- if all_pass %}{{ "The document" if passed == 1 else "All %d documents" % passed }} can be
+  proposed, as {{ prs }} pull request{{ '' if prs == 1 else 's' }}. Review each repo's below.
+  {%- else %}{{ passed }} of {{ checks | length }} documents can be proposed. Leave out the others,
+  or fix their files and upload again, before submitting.{% endif -%}
+</p>
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+
+<form method="post" action="/corrections/content/bulk/submit">
+  {{ m.csrf_field() }}
+  {% for c in carried %}
+  <input type="hidden" name="uid" value="{{ c.uid }}">
+  <input type="hidden" name="file:{{ c.uid }}" value="{{ c.file }}">
+  <input type="hidden" name="reason:{{ c.uid }}" value="{{ c.reason }}">
+  {% endfor %}
+  {% for r in repos %}
+  <input type="hidden" name="digest:{{ r.repo_id }}" value="{{ r.digest }}">
+  {% endfor %}
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Document</th>
+          <th scope="col">Result</th>
+          <th scope="col">Repo</th>
+          <th scope="col">Reason</th>
+          <th scope="col"><span class="visually-hidden">Action</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in checks %}
+        <tr>
+          <td class="mono">{{ c.uid }}</td>
+          <td>
+            {% if c.ok %}{{ m.badge("ok", "Can be proposed") }}
+            {% else %}{{ m.badge("error", "Cannot be proposed") }}{% endif %}
+            {% if c.errors %}<ul class="errors">{% for e in c.errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+            {% if c.warnings %}<ul class="warnings">{% for w in c.warnings %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}
+          </td>
+          <td>{% if c.location %}{{ m.repo(c.location) }}{% endif %}</td>
+          <td>{{ c.reason }}</td>
+          <td>
+            {% if not c.ok %}
+            <button class="small" name="leave_out" value="{{ c.query }}"
+                    formaction="/corrections/content/bulk/check">Leave out</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if prs %}<h3>What each pull request changes</h3>{% endif %}
+  {% for r in repos %}
+  <section class="proposal" aria-label="Pull request on {{ r.repo_id }}">
+    <header>
+      <strong>{{ r.repo_id }}</strong> {{ m.badge(r.tier) }}
+      <p>{{ r.documents | length }} document{{ '' if r.documents | length == 1 else 's' }}.
+        {% if r.first %}{{ r.first }} {{ "is" if r.first == 1 else "are" }} corrected for the
+        first time: their XML as harvested is committed first, so the second commit's diff is
+        exactly the fixes.{% endif %}</p>
+    </header>
+    {% for d in r.documents %}
+    <details>
+      <summary class="mono">{{ d.id }}</summary>
+      {% if d.diff %}
+      <pre class="diff">{% for kind, line in d.diff %}<span class="{{ kind }}">{{ line }}</span>{% endfor %}</pre>
+      {% if d.truncated %}<p class="hint">Only the start of the difference is shown.</p>{% endif %}
+      {% else %}
+      <p class="hint">The difference is only in how the tags are laid out.</p>
+      {% endif %}
+    </details>
+    {% endfor %}
+  </section>
+  {% endfor %}
+
+  {% if not can_submit %}
+  <p class="notice">This is a preview against a local build, so submitting is switched off.</p>
+  {% endif %}
+
+  <label class="confirm">
+    <input type="checkbox" name="confirm" value="yes" {% if not (all_pass and prs) %}disabled{% endif %}>
+    <span>I have reviewed these corrections. Open {{ prs }} pull request{{ '' if prs == 1 else 's' }}
+      for review. The documents keep their current XML until a release applies the change.</span>
+  </label>
+
+  <div class="actions">
+    <button class="primary" {% if not (all_pass and prs and can_submit) %}disabled{% endif %}>
+      Open {{ prs }} pull request{{ '' if prs == 1 else 's' }}</button>
+    <span class="spacer"></span>
+    <a class="button back" href="/corrections/content/bulk">Back</a>
+  </div>
+</form>
+{% endblock %}

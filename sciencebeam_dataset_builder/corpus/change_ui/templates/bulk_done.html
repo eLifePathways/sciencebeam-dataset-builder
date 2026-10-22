@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% import "macros.html" as m with context %}
+{% block content %}
+<h2>{{ "Submitted for review" if all_ok else "Only partly submitted" }}</h2>
+<p class="lead">Each pull request needs a reviewer to merge it. The documents keep their current
+  XML until a release applies the change.</p>
+
+<ul class="outcomes">
+  {% for o in outcomes %}
+  <li>
+    {% if o.ok %}
+    {{ m.badge("ok", "Opened") }} <strong>{{ o.repo_id }}</strong> ·
+    <a href="{{ o.pr_url }}" target="_blank" rel="noopener">Pull request #{{ o.pr_num }}</a>
+    <span class="hint">{{ o.title }}</span>
+    {% else %}
+    {{ m.badge("error", "Not opened") }} <strong>{{ o.repo_id }}</strong>
+    <p class="errors">{{ o.error }}</p>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+
+<form method="post" action="/corrections/content/bulk/check">
+  {{ m.csrf_field() }}
+  {% for c in carried %}
+  <input type="hidden" name="uid" value="{{ c.uid }}">
+  <input type="hidden" name="file:{{ c.uid }}" value="{{ c.file }}">
+  <input type="hidden" name="reason:{{ c.uid }}" value="{{ c.reason }}">
+  {% endfor %}
+  <div class="actions">
+    <a class="button primary" href="/">Start a new request</a>
+    <span class="spacer"></span>
+    {% if not all_ok %}<button class="back">Check them again</button>{% endif %}
+  </div>
+</form>
+{% endblock %}

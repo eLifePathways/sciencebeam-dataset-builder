@@ -14,6 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from sciencebeam_dataset_builder.corpus.change_ui import (
     additions,
+    bulk_corrections,
     corrections,
     metadata,
     removals,
@@ -55,6 +56,7 @@ def create_app(
         return pages.render(request, "type.html", removals.STEPS, "type")
 
     app.include_router(removals.routes(pages, repos))
+    app.include_router(bulk_corrections.routes(pages, repos))
     app.include_router(corrections.routes(pages, repos))
     app.include_router(metadata.routes(pages, repos))
     app.include_router(additions.routes(pages, repos, open_from))
