@@ -163,6 +163,52 @@ class TestReview:
         assert "nothing can be submitted" in response.text
 
 
+class TestRestrictedByChoice:
+    def test_the_reasons_page_offers_it_with_open_first(self, client):
+        page = _post(
+            client,
+            "/additions/reasons",
+            {"corpus": "biorxiv", "from_repo": HARVEST_REPO_ID, "ids": "n1"},
+        ).text
+        assert 'name="to:n1"' in page
+        assert '<option value="open">Open, if its licence allows (recommended)' in page
+        assert 'value="restricted" selected' not in page
+
+    def test_a_corpus_without_both_repos_is_not_offered_it(self, client):
+        page = _post(
+            client,
+            "/additions/reasons",
+            {"corpus": "ore", "from_repo": HARVEST_REPO_ID, "ids": "o1"},
+        ).text
+        assert "Why are they being added?" in page
+        assert 'name="to:o1"' not in page
+
+    def test_a_publishable_document_sent_there_is_reviewed_for_restricted(self, client):
+        page = _post(
+            client, "/additions/check", {**_carried("n1"), "to:n1": "restricted"}
+        ).text
+        assert "The document can be" in page
+        assert "restricted by choice: its licence, CC BY 4.0, allows" in page
+        assert 'name="digest:elifepathways/sciencebeam-dataset-biorxiv-restricted"' in (
+            page
+        )
+        assert '<input type="hidden" name="to:n1" value="restricted">' in page
+
+    def test_back_to_the_reasons_keeps_the_choice(self, client):
+        page = _post(
+            client, "/additions/reasons", {**_carried("n1"), "to:n1": "restricted"}
+        ).text
+        assert 'value="restricted" selected' in page
+
+    def test_a_document_left_out_drops_its_choice(self, client):
+        page = _post(
+            client,
+            "/additions/check",
+            {**_carried("n1", "n2"), "to:n2": "restricted", "leave_out": "n2"},
+        ).text
+        assert 'name="to:n2"' not in page
+
+
 class TestSubmit:
     @pytest.fixture
     def hub(self, open_repo, monkeypatch):
@@ -202,5 +248,11 @@ class TestSubmit:
             k: ("0" * 64 if k.startswith("digest:") else v) for k, v in data.items()
         }
         response = _post(on_hub, "/additions/submit", stale)
+        assert response.status_code == 409
+        assert hub.opened == []
+
+    def test_a_choice_changed_since_the_review_is_not_submitted(self, hub, on_hub):
+        data = self._reviewed(on_hub, _carried("n1"))
+        response = _post(on_hub, "/additions/submit", {**data, "to:n1": "restricted"})
         assert response.status_code == 409
         assert hub.opened == []

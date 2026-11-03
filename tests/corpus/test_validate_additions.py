@@ -90,9 +90,18 @@ def repos(tmp_path: Path, open_repo: Repo, restricted: Repo) -> list[Repo]:
     return [open_repo, restricted, publish(tmp_path, ORE, Tier.OPEN, {"train": ["o0"]})]
 
 
-def _check(repos, reader, *ids, corpus=BIORXIV, from_repo=HARVEST_REPO_ID):
+def _check(
+    repos, reader, *ids, corpus=BIORXIV, from_repo=HARVEST_REPO_ID, restricted=()
+):
     return check_additions(
-        corpus, from_repo, COMMIT, reader, [(i, REASON) for i in ids], repos, "hazal"
+        corpus,
+        from_repo,
+        COMMIT,
+        reader,
+        [(i, REASON) for i in ids],
+        repos,
+        "hazal",
+        restricted,
     )
 
 
@@ -241,6 +250,61 @@ class TestAMove:
         assert check.errors == (
             f"its licence keeps it in {restricted.repo_id}, where it already is",
         )
+
+
+class TestRestrictedByChoice:
+    def test_a_publishable_document_goes_restricted_saying_so(
+        self, repos, harvest, open_repo, restricted
+    ):
+        [check], [proposal] = _check(repos, harvest, "n1", restricted={"n1"})
+        assert check.ok and proposal.repo is restricted
+        assert check.warnings == (
+            f"restricted by choice: its licence, CC BY 4.0, allows {open_repo.repo_id}",
+        )
+
+    def test_a_document_its_licence_sends_there_anyway_has_no_choice_warning(
+        self, repos, harvest, restricted
+    ):
+        [check], _ = _check(repos, harvest, "n3", restricted={"n3"})
+        assert check.repo_id == restricted.repo_id
+        assert not any("by choice" in w for w in check.warnings)
+
+    def test_a_corpus_without_both_repos_offers_no_choice(self, repos, harvest):
+        [check], proposals = _check(repos, harvest, "o1", corpus=ORE, restricted={"o1"})
+        assert check.errors == (
+            "ore has no open and restricted repo to choose between",
+        )
+        assert proposals == []
+
+    def test_a_move_from_the_open_repo(self, tmp_path, restricted):
+        losing = publish(
+            tmp_path / "m", BIORXIV, Tier.OPEN, {"train": ["m"]}, xml={"m": jats()}
+        )
+        [check], [proposal] = _check(
+            [losing, restricted],
+            losing.reader,
+            "m",
+            from_repo=losing.repo_id,
+            restricted={"m"},
+        )
+        assert check.ok and proposal.repo is restricted
+        assert check.addition is not None
+        assert check.addition.from_repo == losing.repo_id
+        assert check.warnings == (
+            f"restricted by choice: its licence, CC BY 4.0, allows {losing.repo_id}",
+            f"still in {losing.repo_id}'s latest release: this can be applied only "
+            f"once its removal there is released",
+        )
+
+    def test_a_document_already_in_the_restricted_repo(self, repos, restricted):
+        [check], _ = _check(
+            repos,
+            restricted.reader,
+            "b",
+            from_repo=restricted.repo_id,
+            restricted={"b"},
+        )
+        assert check.errors == (f"it is already in {restricted.repo_id}",)
 
 
 class TestOpenPullRequests:

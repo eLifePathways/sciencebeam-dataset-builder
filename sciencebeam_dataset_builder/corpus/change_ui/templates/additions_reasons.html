@@ -5,7 +5,9 @@
 <p class="lead">{{ draft.uids | length }} {{ source.corpus.name }} document{{ '' if draft.uids | length == 1 else 's' }}
   from <span class="mono">{{ source.repo_id }}</span> at commit
   <span class="mono">{{ source.commit[:12] }}</span>. Give one reason for all of them, and change it
-  for any document that needs its own.</p>
+  for any document that needs its own.
+  {%- if offers_choice %} A document goes to the open repo if its licence allows it, unless you
+  send it to restricted; any other goes to restricted either way.{% endif %}</p>
 
 <form method="post" action="/additions/check">
   {{ m.csrf_field() }}
@@ -20,7 +22,10 @@
   <div class="table-scroll">
     <table>
       <thead>
-        <tr><th scope="col">Document</th><th scope="col">Own reason (optional)</th></tr>
+        <tr>
+          <th scope="col">Document</th><th scope="col">Own reason (optional)</th>
+          {% if offers_choice %}<th scope="col">Goes to</th>{% endif %}
+        </tr>
       </thead>
       <tbody>
         {% for uid in draft.uids %}
@@ -31,6 +36,14 @@
                    maxlength="{{ max_reason }}" placeholder="Uses the reason for all documents"
                    aria-label="Reason for {{ uid }}">
           </td>
+          {% if offers_choice %}
+          <td>
+            <select name="to:{{ uid }}" aria-label="Where {{ uid }} goes">
+              <option value="open">Open, if its licence allows (recommended)</option>
+              <option value="restricted"{% if uid in restricted %} selected{% endif %}>Restricted</option>
+            </select>
+          </td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>

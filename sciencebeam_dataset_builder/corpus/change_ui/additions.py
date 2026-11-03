@@ -1,7 +1,8 @@
 """The add documents pages: documents, reasons, review, submitted.
 
 Documents come from one commit of the harvest repo, or of another repo of the same corpus
-for a move; each one's licence decides which repo it goes to.
+for a move; each one's licence decides which repo it goes to, unless it is sent to
+restricted on the reasons page.
 """
 
 from collections.abc import Callable, Sequence
@@ -45,6 +46,7 @@ from sciencebeam_dataset_builder.corpus.validate_additions import (
     AdditionProposal,
     check_additions,
     new_in,
+    offers_choice,
 )
 
 STEPS: Steps = (
@@ -131,6 +133,7 @@ def routes(
         request: Request,
         source: _From,
         draft: Draft,
+        restricted: frozenset[str] = frozenset(),
         *,
         error: str = "",
         status_code: int = 200,
@@ -142,6 +145,8 @@ def routes(
             "reasons",
             source=source,
             draft=draft,
+            restricted=restricted,
+            offers_choice=offers_choice(source.corpus),
             error=error,
             status_code=status_code,
         )
@@ -150,6 +155,7 @@ def routes(
         request: Request,
         source: _From,
         draft: Draft,
+        restricted: frozenset[str],
         *,
         checked: Checked | None = None,
         error: str = "",
@@ -157,15 +163,15 @@ def routes(
     ) -> HTMLResponse:
         user, problem = pages.who()
         if problem:
-            return reasons_page(request, source, draft, status_code=401)
+            return reasons_page(request, source, draft, restricted, status_code=401)
         if checked is None:
             try:
                 checked = await run_in_threadpool(
-                    _check, open_from, source, draft, repos(), user
+                    _check, open_from, source, draft, restricted, repos(), user
                 )
             except (AdditionRowsError, RepoReadError) as exc:
                 return reasons_page(
-                    request, source, draft, error=str(exc), status_code=502
+                    request, source, draft, restricted, error=str(exc), status_code=502
                 )
         checks, proposals = checked
         return pages.render(
@@ -175,6 +181,7 @@ def routes(
             "review",
             source=source,
             draft=draft,
+            restricted=restricted,
             checks=[_check_view(c) for c in checks],
             proposals=[_proposal_view(p) for p in proposals],
             all_pass=bool(checks) and all(c.ok for c in checks),
@@ -196,7 +203,7 @@ def routes(
         data = await pages.form(request)
         draft = draft_of(data)
         if draft.uids:
-            return reasons_page(request, where(data), draft)
+            return reasons_page(request, where(data), draft, _restricted(data, draft))
         revision = text(data.get("revision")).strip() or "main"
         try:
             corpus = _corpus(text(data.get("corpus")))
@@ -233,20 +240,22 @@ def routes(
                 data,
                 error="Every document has been left out. Choose documents again.",
             )
-        return await review(request, source, draft)
+        return await review(request, source, draft, _restricted(data, draft))
 
     @router.post("/submit")
     async def submit(request: Request) -> HTMLResponse:
         data = await pages.form(request)
         source, draft = where(data), draft_of(data)
+        restricted = _restricted(data, draft)
         user, problem = pages.who()
         if problem:
-            return await review(request, source, draft)
+            return await review(request, source, draft, restricted)
         if not pages.can_submit:
             return await review(
                 request,
                 source,
                 draft,
+                restricted,
                 error="This is a preview against a local build, so nothing can be "
                 "submitted.",
                 status_code=403,
@@ -256,12 +265,13 @@ def routes(
                 request,
                 source,
                 draft,
+                restricted,
                 error="Tick the box to confirm you have reviewed the additions.",
                 status_code=400,
             )
         try:
             checks, proposals = await run_in_threadpool(
-                _check, open_from, source, draft, repos(), user
+                _check, open_from, source, draft, restricted, repos(), user
             )
         except (AdditionRowsError, RepoReadError) as exc:
             raise PageError(502, str(exc)) from exc
@@ -270,6 +280,7 @@ def routes(
                 request,
                 source,
                 draft,
+                restricted,
                 checked=(checks, proposals),
                 error="Some documents no longer pass the checks. Review them again.",
                 status_code=409,
@@ -284,6 +295,7 @@ def routes(
                 request,
                 source,
                 draft,
+                restricted,
                 checked=(checks, proposals),
                 error="The files to propose changed after you reviewed them. Review "
                 "them again.",
@@ -316,10 +328,16 @@ def _corpus_repo_ids() -> list[str]:
     ]
 
 
+def _restricted(data: FormData, draft: Draft) -> frozenset[str]:
+    """The draft's documents sent to restricted; a left-out one drops out."""
+    return frozenset(u for u in draft.uids if text(data.get(f"to:{u}")) == "restricted")
+
+
 def _check(
     open_from: OpenFrom,
     source: _From,
     draft: Draft,
+    restricted: frozenset[str],
     repos: Sequence[Repo],
     user: str,
 ) -> Checked:
@@ -332,6 +350,7 @@ def _check(
         draft.requests(),
         repos,
         user,
+        restricted,
     )
 
 
