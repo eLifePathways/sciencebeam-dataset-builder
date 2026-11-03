@@ -1,11 +1,12 @@
 """Checking additions before they are proposed: where each document lands, and what
 stops it.
 
-A document's licence, as its own XML states it, picks the repo. It shares the repo state
-`validate` reads for removals and corrections.
+A document's licence, as its own XML states it, picks the repo, unless the submitter sends
+it to restricted; nothing goes to open by choice. It shares the repo state `validate` reads
+for removals and corrections.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
 from sciencebeam_dataset_builder.corpus import layout
@@ -13,6 +14,7 @@ from sciencebeam_dataset_builder.corpus.addition_rows import (
     AdditionRowsError,
     available,
 )
+from sciencebeam_dataset_builder.corpus.layout import Tier
 from sciencebeam_dataset_builder.corpus.change_files import (
     Addition,
     ChangeFileError,
@@ -89,9 +91,11 @@ def check_additions(
     requests: Sequence[tuple[str, str]],
     repos: Sequence[Repo],
     changed_by: str,
+    restricted: Collection[str] = (),
 ) -> tuple[list[AdditionCheck], list[AdditionProposal]]:
     """Check each `(query, reason)` against what `from_repo` holds at `from_commit`, and
-    propose the ones that pass, one file per repo their licence puts them in.
+    propose the ones that pass, one file per repo they go to: the one their licence puts
+    them in, or restricted for the queries in `restricted`.
 
     Raises AdditionRowsError when `from_repo` cannot be read.
     """
@@ -130,7 +134,9 @@ def check_additions(
             draft.errors.append(f"not in {from_repo}")
             continue
         draft.split, draft.licence = document.split, document.licence
-        draft.repo_id = _destination(corpus, draft, from_repo, mine)
+        draft.repo_id = _destination(
+            corpus, draft, from_repo, mine, chosen=query in restricted
+        )
         if not draft.repo_id:
             continue
         draft.errors += unreadable
@@ -221,6 +227,11 @@ def new_in(
     ]
 
 
+def offers_choice(corpus: Corpus) -> bool:
+    """Whether `corpus` has both repos, so a publishable document may go to either."""
+    return set(corpus.tiers) == set(Tier)
+
+
 def _id_in_corpus(corpus: Corpus, query: str) -> tuple[str, str]:
     """The id, bare or as `<source>__<id>`, or why `query` names none in `corpus`."""
     try:
@@ -242,20 +253,43 @@ def _membership(repo: Repo) -> dict[str, str]:
 
 
 def _destination(
-    corpus: Corpus, draft: _AdditionDraft, from_repo: str, mine: Mapping[str, Repo]
+    corpus: Corpus,
+    draft: _AdditionDraft,
+    from_repo: str,
+    mine: Mapping[str, Repo],
+    *,
+    chosen: bool,
 ) -> str:
-    """The repo the document's licence puts it in, or "" with the reason in `draft`."""
+    """The repo the document goes to, or "" with the reason in `draft`: restricted when
+    `chosen`, otherwise the one its licence puts it in."""
     verdict = route_licence(f"{corpus.source}__{draft.id}", draft.licence)
-    tier = verdict.tier.value
-    if verdict.tier not in corpus.tiers:
+    if chosen:
+        if not offers_choice(corpus):
+            draft.errors.append(
+                f"{corpus.name} has no open and restricted repo to choose between"
+            )
+            return ""
+        if verdict.tier is Tier.OPEN:
+            draft.warnings.append(
+                f"restricted by choice: its licence, {draft.licence}, allows "
+                f"{corpus.repo_id(Tier.OPEN)}"
+            )
+        tier = Tier.RESTRICTED
+    elif verdict.tier not in corpus.tiers:
         draft.errors.append(
-            f"its licence routes it to {tier} ({verdict.reason}), and {corpus.name} "
-            f"has no {tier} repo"
+            f"its licence routes it to {verdict.tier.value} ({verdict.reason}), and "
+            f"{corpus.name} has no {verdict.tier.value} repo"
         )
         return ""
-    repo_id = corpus.repo_id(verdict.tier)
+    else:
+        tier = verdict.tier
+    repo_id = corpus.repo_id(tier)
     if repo_id == from_repo:
-        draft.errors.append(f"its licence keeps it in {from_repo}, where it already is")
+        draft.errors.append(
+            f"it is already in {from_repo}"
+            if chosen
+            else f"its licence keeps it in {from_repo}, where it already is"
+        )
         return ""
     if repo_id not in mine:
         draft.errors.append(f"{repo_id} cannot be read here")

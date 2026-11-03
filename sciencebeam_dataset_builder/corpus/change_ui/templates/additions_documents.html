@@ -3,8 +3,8 @@
 {% block content %}
 <h2>Which documents to add?</h2>
 <p class="lead">Documents come from one commit of the harvest repo, or of the corpus's other repo
-  to move them. Each one's licence, as its XML states it, decides which repo it goes to, and its
-  split is the one it has there.</p>
+  to move them. Each one's licence, as its XML states it, decides which repo it goes to, unless
+  you send it to the restricted repo on the next page, and its split is the one it has there.</p>
 
 <form method="post" action="/additions/reasons">
   {{ m.csrf_field() }}

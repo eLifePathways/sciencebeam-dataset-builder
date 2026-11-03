@@ -139,6 +139,17 @@ class TestHarvest:
         with pytest.raises(ApplyError, match="now puts it in the restricted repo"):
             _apply(repo, open_repo, tmp_path)
 
+    def test_a_publishable_document_sent_to_restricted_is_added(
+        self, open_repo, tmp_path
+    ):
+        restricted = publish(
+            tmp_path / "hub", BIORXIV, Tier.RESTRICTED, {"train": ["x"]}
+        )
+        write_file(restricted, layout.ADDITIONS_PATH, _additions(("n1", 1)))
+        release = _apply(restricted, open_repo, tmp_path)
+        manifest = release.root / layout.release_manifest_path("v1.1.0")
+        assert [m.id for m in read_membership(manifest)] == ["x", "n1"]
+
 
 class TestMove:
     def test_it_waits_for_the_losing_repos_removal(

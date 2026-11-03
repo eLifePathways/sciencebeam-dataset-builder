@@ -14,6 +14,7 @@
   {{ m.csrf_field() }}
   {{ m.carry_from(source) }}
   {{ m.carry(draft) }}
+  {{ m.carry_restricted(restricted) }}
   {% for p in proposals %}
   <input type="hidden" name="digest:{{ p.repo_id }}" value="{{ p.digest }}">
   {% endfor %}

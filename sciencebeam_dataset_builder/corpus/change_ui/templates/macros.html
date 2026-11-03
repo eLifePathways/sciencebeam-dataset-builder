@@ -19,6 +19,13 @@
 <input type="hidden" name="from_commit" value="{{ source.commit }}">
 {%- endmacro %}
 
+{# The additions sent to restricted by choice; the others go where their licence puts them. #}
+{% macro carry_restricted(restricted) -%}
+{% for uid in restricted | sort %}
+<input type="hidden" name="to:{{ uid }}" value="restricted">
+{% endfor %}
+{%- endmacro %}
+
 {# Opening a pull request takes a while: one press only, and say so. The server refuses a
    repeated submission either way. #}
 {% macro submit_once() -%}

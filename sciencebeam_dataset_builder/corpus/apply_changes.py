@@ -373,7 +373,8 @@ def _added_rows(
 
     A move waits until the losing repo has released its removal, so a document is never
     in both halves of a corpus; and each licence is read again, since the policy or the
-    extractor may have changed since the proposal.
+    extractor may have changed since the proposal. Restricted takes any licence, since a
+    publishable document may be sent there by choice.
     """
     if not additions:
         return CORPUS_SCHEMA.empty_table(), {}
@@ -418,7 +419,7 @@ def _added_rows(
         rows.column("id").to_pylist(), rows.column("licence").to_pylist(), strict=True
     ):
         tier = route_licence(f"{repo.corpus.source}__{id_value}", licence).tier
-        if tier is not repo.tier:
+        if repo.tier is layout.Tier.OPEN and tier is not layout.Tier.OPEN:
             raise ApplyError(
                 f"{id_value}: its licence, {licence or 'none'}, now puts it in the "
                 f"{tier.value} repo, not this one"

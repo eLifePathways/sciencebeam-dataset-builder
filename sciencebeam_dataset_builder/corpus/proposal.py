@@ -363,7 +363,7 @@ def addition_description(
             *(["", "**Warnings:**", "", *warnings] if warnings else []),
             "",
             f"**Validation:** all {len(rows)} passed. Each is in `{first.from_repo}` at that "
-            "commit, the licence its XML states puts it in this repo, this repo does not "
+            "commit, the licence its XML states allows it in this repo, this repo does not "
             "hold it yet, and nothing else is pending for it on `main` or in an open pull "
             "request.",
         ]
