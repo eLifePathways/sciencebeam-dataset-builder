@@ -65,6 +65,11 @@ class TestBody:
         assert "rows where `xml_upstream` is set" in rendered
         assert "`changes/corrections/<id>/correction.yml`" in rendered
 
+    def test_it_says_encoding_repair_may_change_the_xml(self):
+        rendered = render_card(BIORXIV, Tier.OPEN, COUNTS)
+        assert "Where `xml_ftfy_applied` is true" in rendered
+        assert "may differ from the publisher's" in rendered
+
     def test_it_says_the_corpus_set_is_provisional(self):
         assert "provisional" in render_card(BIORXIV, Tier.OPEN, COUNTS)
 
