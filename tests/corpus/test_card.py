@@ -75,3 +75,15 @@ class TestBody:
     def test_the_public_and_private_cards_say_different_things_about_reuse(self):
         assert "may be redistributed" in render_card(BIORXIV, Tier.OPEN, COUNTS)
         assert "may not be redistributed" in render_card(PKP, Tier.RESTRICTED, COUNTS)
+
+    def test_the_open_card_says_how_to_credit_a_document(self):
+        """CC BY requires attribution and a link to the licence."""
+        rendered = render_card(BIORXIV, Tier.OPEN, COUNTS)
+        assert "## Licence and attribution" in rendered
+        assert "(https://creativecommons.org/licenses/by/4.0/)" in rendered
+        assert "belong to their authors" in rendered
+        assert "authors, title, DOI" in rendered
+
+    def test_the_private_card_has_no_attribution_section(self):
+        rendered = render_card(PKP, Tier.RESTRICTED, COUNTS)
+        assert "Licence and attribution" not in rendered

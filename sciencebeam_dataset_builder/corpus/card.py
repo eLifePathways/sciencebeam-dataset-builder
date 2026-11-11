@@ -150,9 +150,13 @@ def render_card(corpus: Corpus, tier: Tier, counts: Counts) -> str:
 def _tier_paragraph(tier: Tier) -> str:
     if tier.public:
         return (
-            "Every document here is openly licensed and may be redistributed with "
-            "attribution. Attribution is discharged per document from the `xml`, which "
-            "carries the title, the author list and the licence statement."
+            "## Licence and attribution\n\n"
+            "Each document is published by its authors under "
+            "[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), as its "
+            "`licence` column says, and may be redistributed under that licence. The "
+            "documents belong to their authors, not to us. To credit one, give its "
+            "authors, title, DOI (the `doi` column) and licence; the `xml` carries the "
+            "author list, the title and the licence statement."
         )
     return (
         "This repo is private because its documents may not be redistributed. What each "
