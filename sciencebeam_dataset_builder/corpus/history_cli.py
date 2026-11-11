@@ -1,7 +1,8 @@
 """Remove an open corpus repo's history, keeping its files exactly as they are.
 
 Older commits, their tags and pull request refs still hold documents removed since, so an
-open repo goes public only once `main` is one commit carrying its release's tag.
+open repo goes public only once `main` is one commit carrying its release's tag and the
+Hub stores no large file that `main` does not use.
 
     # the history the repo holds, and the pull request refs to delete first
     python -m sciencebeam_dataset_builder.corpus.history_cli --corpus ore --tier open
@@ -11,12 +12,13 @@ open repo goes public only once `main` is one commit carrying its release's tag.
         --version v2.0.0 --squash
 
 A pull request ref can only be deleted on the website: open the pull request and press
-"Delete ref" at the bottom. Squashing cannot be undone.
+"Delete ref" at the bottom. Squashing cannot be undone. The Hub deletes the old files once
+nothing refers to them, which can take up to 36 hours.
 """
 
 import argparse
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sciencebeam_dataset_builder.corpus import layout
 from sciencebeam_dataset_builder.corpus.apply_changes import ApplyError, read_pending
@@ -43,20 +45,23 @@ class History:
     tags: dict[str, str]
     # The website page of each pull request whose ref remains.
     pull_requests: list[str]
-    # Shard versions in main's history that are not the ones at its head.
-    older_shards: int
+    # Large files the Hub stores that `main` does not use: older shard versions.
+    unused_files: int
+
+    @property
+    def squashed(self) -> bool:
+        return self.commits == 1 and set(self.tags.values()) <= {self.head}
 
 
 def read_history(api: "HfApi", repo_id: str) -> History:
     refs = api.list_repo_refs(repo_id, repo_type="dataset", include_pull_requests=True)
     commits = [c.commit_id for c in api.list_repo_commits(repo_id, repo_type="dataset")]
-    at_head = _tree(api, repo_id, commits[0])
-    older = {
-        (path, blob)
-        for commit in commits[1:]
-        for path, blob in _tree(api, repo_id, commit).items()
-        if path.endswith(".parquet") and at_head.get(path) != blob
+    in_use = {
+        entry.lfs.sha256
+        for entry in _files(api, repo_id, commits[0])
+        if getattr(entry, "lfs", None)
     }
+    stored = api.list_lfs_files(repo_id, repo_type="dataset")
     return History(
         head=commits[0],
         commits=len(commits),
@@ -65,7 +70,7 @@ def read_history(api: "HfApi", repo_id: str) -> History:
             f"{HUB_DATASETS_URL}/{repo_id}/discussions/{p.ref.rsplit('/', 1)[1]}"
             for p in refs.pull_requests or []
         ],
-        older_shards=len(older),
+        unused_files=sum(1 for f in stored if f.file_oid not in in_use),
     )
 
 
@@ -122,14 +127,45 @@ def squash(api: "HfApi", repo: Repo, version: str) -> History:
     return after
 
 
-def _tree(api: "HfApi", repo_id: str, revision: str) -> dict[str, str]:
-    return {
-        entry.path: entry.blob_id
+def report(repo_id: str, history: History, latest: str | None) -> list[str]:
+    lines = [
+        f"{repo_id}:",
+        f"  {history.commits} commits on main; {history.unused_files} stored large "
+        f"files that main does not use",
+        f"  tags: {', '.join(history.tags) or 'none'}",
+    ]
+    squash_args = f'RUN_ARGS="--version {latest} --squash"'
+    if history.pull_requests:
+        lines.append(
+            f"  {len(history.pull_requests)} pull request refs; delete each on the "
+            f'website with "Delete ref" at the bottom of its page:'
+        )
+        lines += [f"    {url}" for url in history.pull_requests]
+        lines.append(f"Then pass {squash_args} to remove the history.")
+    elif history.unused_files and not history.squashed:
+        lines.append(f"Pass {squash_args} to remove the history.")
+    elif history.unused_files:
+        lines.append(
+            "  squashed; the Hub deletes files nothing refers to, which can take up to "
+            "36 hours, so run this again later to check they are gone"
+        )
+    else:
+        lines.append("  nothing older to remove")
+    return lines
+
+
+def _files(api: "HfApi", repo_id: str, revision: str) -> list[Any]:
+    return [
+        entry
         for entry in api.list_repo_tree(
             repo_id, repo_type="dataset", revision=revision, recursive=True
         )
         if hasattr(entry, "blob_id")
-    }
+    ]
+
+
+def _tree(api: "HfApi", repo_id: str, revision: str) -> dict[str, str]:
+    return {entry.path: entry.blob_id for entry in _files(api, repo_id, revision)}
 
 
 def _resolve(api: "HfApi", repo_id: str, tag: str) -> str:
@@ -175,35 +211,15 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit(f"{repo.repo_id}: {exc}") from exc
         print(
             f"Squashed {repo.repo_id} to one commit, {after.head[:12]}, tagged "
-            f"{args.version}; its files are unchanged. Check Settings > List Large "
-            f"Files on the website shows only the current shards."
+            f"{args.version}; its files are unchanged. Run this again without "
+            f"RUN_ARGS until it reports nothing older to remove."
         )
         return
 
     history = read_history(api, repo.repo_id)
-    _report(repo.repo_id, history)
-    if history.older_shards or history.pull_requests:
-        latest = layout.latest_release(reader.files())
-        then = "Then pass" if history.pull_requests else "Pass"
-        print(f'{then} RUN_ARGS="--version {latest} --squash" to remove the history.')
-
-
-def _report(repo_id: str, history: History) -> None:
-    print(f"{repo_id}:")
     print(
-        f"  {history.commits} commits on main, holding {history.older_shards} "
-        f"older shard versions"
+        "\n".join(report(repo.repo_id, history, layout.latest_release(reader.files())))
     )
-    print(f"  tags: {', '.join(history.tags) or 'none'}")
-    if history.pull_requests:
-        print(
-            f"  {len(history.pull_requests)} pull request refs; delete each on the "
-            f'website with "Delete ref" at the bottom of its page:'
-        )
-        for url in history.pull_requests:
-            print(f"    {url}")
-    elif not history.older_shards:
-        print("  nothing older to remove")
 
 
 if __name__ == "__main__":

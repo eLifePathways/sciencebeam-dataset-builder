@@ -10,6 +10,7 @@ from sciencebeam_dataset_builder.corpus.history_cli import (
     HistoryError,
     parse_args,
     read_history,
+    report,
     squash,
 )
 from sciencebeam_dataset_builder.corpus.layout import Tier
@@ -26,11 +27,13 @@ SHARD = "pdf-jats/train/train-00000.parquet"
 
 @dataclass
 class FakeApi:
-    """`main` newest first; each commit's tree maps a path to its blob."""
+    """`main` newest first; each commit's tree maps a path to its blob, which doubles as
+    a shard's sha256. `stored` is every large file the Hub keeps."""
 
     main: list[str]
     trees: dict[str, dict[str, str]]
     tags: dict[str, str]
+    stored: list[str]
     pull_requests: list[int] = field(default_factory=list)
     calls: list[str] = field(default_factory=list)
 
@@ -52,8 +55,16 @@ class FakeApi:
     def list_repo_tree(self, repo_id, repo_type, revision, recursive):
         folders = [SimpleNamespace(path="pdf-jats", tree_id="t")]
         return folders + [
-            SimpleNamespace(path=p, blob_id=b) for p, b in self.trees[revision].items()
+            SimpleNamespace(
+                path=p,
+                blob_id=b,
+                lfs=SimpleNamespace(sha256=b) if p.endswith(".parquet") else None,
+            )
+            for p, b in self.trees[revision].items()
         ]
+
+    def list_lfs_files(self, repo_id, repo_type):
+        return [SimpleNamespace(file_oid=oid) for oid in self.stored]
 
     def super_squash_history(self, repo_id, repo_type, commit_message):
         self.calls.append("squash")
@@ -79,8 +90,13 @@ def _api(pull_requests: list[int] | None = None) -> FakeApi:
             "c3": {SHARD: "new", "README.md": "r2"},
         },
         tags={"v0.1.0": "c1", "v1.0.0": "c2"},
+        stored=["old", "new"],
         pull_requests=pull_requests or [],
     )
+
+
+def _report(api: FakeApi) -> str:
+    return "\n".join(report(REPO_ID, read_history(api, REPO_ID), "v1.0.0"))
 
 
 @pytest.fixture
@@ -89,8 +105,8 @@ def repo(tmp_path: Path) -> Repo:
 
 
 class TestHistory:
-    def test_it_counts_older_shard_versions_but_not_other_files(self):
-        assert read_history(_api(), REPO_ID).older_shards == 1
+    def test_it_counts_the_stored_files_main_does_not_use(self):
+        assert read_history(_api(), REPO_ID).unused_files == 1
 
     def test_tags_resolve_to_their_commits(self):
         assert read_history(_api(), REPO_ID).tags == {"v0.1.0": "c1", "v1.0.0": "c2"}
@@ -100,16 +116,34 @@ class TestHistory:
         assert url == f"https://huggingface.co/datasets/{REPO_ID}/discussions/2"
 
 
+class TestReport:
+    def test_pull_request_refs_come_before_the_squash(self):
+        text = _report(_api([2]))
+        assert f"datasets/{REPO_ID}/discussions/2" in text
+        assert 'Then pass RUN_ARGS="--version v1.0.0 --squash"' in text
+
+    def test_older_files_in_the_history_ask_for_the_squash(self):
+        assert 'Pass RUN_ARGS="--version v1.0.0 --squash"' in _report(_api())
+
+    def test_after_the_squash_it_waits_for_the_hub_to_delete_them(self, repo):
+        api = _api()
+        squash(api, repo, "v1.0.0")
+        text = _report(api)
+        assert "up to 36 hours" in text
+        assert "--squash" not in text
+
+    def test_a_repo_with_nothing_older_says_so(self):
+        api = _api()
+        api.stored = ["new"]
+        assert "nothing older to remove" in _report(api)
+
+
 class TestSquash:
     def test_it_leaves_one_commit_with_the_release_tag_and_the_same_files(self, repo):
         api = _api()
         after = squash(api, repo, "v1.0.0")
         assert api.calls == ["squash", "delete v0.1.0", "delete v1.0.0", "tag v1.0.0"]
-        assert (after.commits, after.tags, after.older_shards) == (
-            1,
-            {"v1.0.0": "squashed"},
-            0,
-        )
+        assert (after.commits, after.tags) == (1, {"v1.0.0": "squashed"})
         assert api.trees["squashed"] == {SHARD: "new", "README.md": "r2"}
 
     def test_it_refuses_while_a_pull_request_ref_remains(self, repo):
