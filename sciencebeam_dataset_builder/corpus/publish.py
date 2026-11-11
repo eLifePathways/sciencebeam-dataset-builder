@@ -14,6 +14,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from sciencebeam_dataset_builder.corpus import layout
+from sciencebeam_dataset_builder.corpus.attributions import render_attributions
 from sciencebeam_dataset_builder.corpus.card import render_card
 from sciencebeam_dataset_builder.corpus.layout import Tier
 from sciencebeam_dataset_builder.corpus.ledger import (
@@ -155,6 +156,12 @@ def prepare_release(
         render_card(corpus, tier, by_pairing), encoding="utf-8"
     )
     paths.append(layout.CARD_PATH)
+
+    if tier.public:
+        _local(root, layout.ATTRIBUTIONS_PATH).write_text(
+            render_attributions([m.id for m in membership], [table]), encoding="utf-8"
+        )
+        paths.append(layout.ATTRIBUTIONS_PATH)
 
     return PreparedRelease(
         corpus=corpus,

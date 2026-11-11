@@ -113,6 +113,11 @@ class TestHarvest:
         manifest = release.root / layout.release_manifest_path("v1.1.0")
         assert [m.id for m in read_membership(manifest)] == ["a", "b", "n2", "n1"]
 
+    def test_the_attributions_append_them_too(self, release):
+        text = (release.root / layout.ATTRIBUTIONS_PATH).read_text(encoding="utf-8")
+        ids = [line.split(",")[0] for line in text.splitlines()[1:]]
+        assert ids == ["a", "b", "n2", "n1"]
+
     def test_the_ledger_records_each_with_its_shard(self, release):
         changes = read_ledger(release.root / layout.LEDGER_PATH)
         assert [

@@ -24,6 +24,10 @@ from sciencebeam_dataset_builder.corpus.addition_rows import (
     AdditionRowsError,
     read_rows,
 )
+from sciencebeam_dataset_builder.corpus.attributions import (
+    ATTRIBUTION_COLUMNS,
+    render_attributions,
+)
 from sciencebeam_dataset_builder.corpus.card import render_card
 from sciencebeam_dataset_builder.corpus.change_files import (
     EDITABLE_FIELDS,
@@ -276,6 +280,12 @@ def apply(
         render_card(repo.corpus, repo.tier, counts), encoding="utf-8"
     )
     paths += [layout.LEDGER_PATH, manifest, layout.CARD_PATH]
+    if repo.tier.public:
+        _local(root, layout.ATTRIBUTIONS_PATH).write_text(
+            _attributions(repo, root, pending.files, paths, membership),
+            encoding="utf-8",
+        )
+        paths.append(layout.ATTRIBUTIONS_PATH)
 
     commit = repo.reader.commit if isinstance(repo.reader, HubRepo) else ""
     ReleaseRecord(
@@ -297,6 +307,25 @@ def apply(
         tuple(changes),
         counts,
     )
+
+
+def _attributions(
+    repo: Repo,
+    root: Path,
+    base_files: Sequence[str],
+    written: Sequence[str],
+    membership: Sequence[Membership],
+) -> str:
+    """Made from every shard of the new release: the written ones from `root`, the
+    others from the repo, reading only the columns needed."""
+    shards = sorted({p for p in (*base_files, *written) if p.endswith(".parquet")})
+    tables = (
+        pq.read_table(root / shard, columns=list(ATTRIBUTION_COLUMNS))
+        if shard in written
+        else repo.reader.read_columns(shard, ATTRIBUTION_COLUMNS)
+        for shard in shards
+    )
+    return render_attributions([m.id for m in membership], tables)
 
 
 def release_root(output_dir: Path, repo_id: str, version: str) -> Path:

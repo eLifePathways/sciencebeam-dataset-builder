@@ -1,5 +1,6 @@
 """Tests for corpus.apply_changes — turning merged changes into a release."""
 
+import csv
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -76,6 +77,11 @@ def repo(tmp_path):
 
 def _shard(root: Path, split: str = "train") -> pa.Table:
     return pq.read_table(root / layout.shard_path("pdf-jats", split, 0))
+
+
+def _attributions(release: AppliedRelease) -> list[dict[str, str]]:
+    text = (release.root / layout.ATTRIBUTIONS_PATH).read_text(encoding="utf-8")
+    return list(csv.DictReader(text.splitlines()))
 
 
 def _apply(repo: Repo, tmp_path: Path, version: str = "v2.0.0") -> AppliedRelease:
@@ -173,7 +179,18 @@ class TestRemoval:
             layout.LEDGER_PATH,
             "releases/v2.0.0.csv",
             layout.CARD_PATH,
+            layout.ATTRIBUTIONS_PATH,
         )
+
+    def test_the_attributions_leave_the_document_out(self, release):
+        assert [r["id"] for r in _attributions(release)] == ["a", "c"]
+
+    def test_a_restricted_release_writes_no_attributions(self, tmp_path):
+        repo = publish(
+            tmp_path / "hub", BIORXIV, Tier.RESTRICTED, {"train": ["a", "b"]}
+        )
+        write_file(repo, layout.REMOVALS_PATH, _removals(("b", 1)))
+        assert layout.ATTRIBUTIONS_PATH not in _apply(repo, tmp_path).paths
 
     def test_the_ledger_records_it_against_the_release_it_was_made_on(self, release):
         [change] = read_ledger(release.root / layout.LEDGER_PATH)
@@ -213,6 +230,13 @@ class TestCorrection:
         assert row["pdf"] == before["pdf"]
         assert row["row_updated_at"] == STAMP
         assert untouched["row_updated_at"] == "2026-10-01T00:00:00Z"
+
+    def test_the_attributions_credit_the_corrected_xml(self, repo, tmp_path):
+        paths = layout.correction_paths("a")
+        write_file(repo, paths.metadata, _corrections("a", _content(1)))
+        write_file(repo, paths.corrected, FIXED)
+        titles = {r["id"]: r["title"] for r in _attributions(_apply(repo, tmp_path))}
+        assert titles == {"a": "New title", "b": "", "c": ""}
 
     def test_a_later_correction_leaves_the_original_alone(self, tmp_path):
         repo = publish(

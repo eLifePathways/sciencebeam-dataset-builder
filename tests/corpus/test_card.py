@@ -90,6 +90,11 @@ class TestBody:
         assert "belong to their authors" in rendered
         assert "authors, title, DOI" in rendered
 
+    def test_the_open_card_points_at_the_attributions_file(self):
+        rendered = render_card(BIORXIV, Tier.OPEN, COUNTS)
+        assert "`attributions.csv` lists each document's" in rendered
+        assert "attributions.csv" not in render_card(PKP, Tier.RESTRICTED, COUNTS)
+
     def test_the_private_card_has_no_attribution_section(self):
         rendered = render_card(PKP, Tier.RESTRICTED, COUNTS)
         assert "Licence and attribution" not in rendered

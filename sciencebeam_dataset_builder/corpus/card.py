@@ -10,6 +10,7 @@ from collections.abc import Mapping
 import pyarrow as pa
 
 from sciencebeam_dataset_builder.corpus.layout import (
+    ATTRIBUTIONS_PATH,
     CORRECTION_METADATA_FILENAME,
     CORRECTIONS_DIRECTORY,
     Tier,
@@ -166,7 +167,9 @@ def _tier_paragraph(tier: Tier) -> str:
             "`licence` column says, and may be redistributed under that licence. The "
             "documents belong to their authors, not to us. To credit one, give its "
             "authors, title, DOI (the `doi` column) and licence; the `xml` carries the "
-            "author list, the title and the licence statement."
+            "author list, the title and the licence statement. "
+            f"`{ATTRIBUTIONS_PATH}` lists each document's id, DOI, title, authors and "
+            "licence."
         )
     return (
         "This repo is private because its documents may not be redistributed. What each "
