@@ -70,7 +70,7 @@ def _prepare(tmp_path, **kwargs):
     ids = kwargs.pop("ids", list(SPLITS))
     return prepare_release(
         corpus=BIORXIV,
-        tier=Tier.OPEN,
+        tier=kwargs.pop("tier", Tier.OPEN),
         pairing="pdf-jats",
         table=_table(ids),
         splits=SPLITS,
@@ -120,6 +120,22 @@ class TestAssembling:
         release = _prepare(tmp_path)
         card = (release.root / "README.md").read_text(encoding="utf-8")
         assert "| `pdf-jats` | 1 | 0 | 2 | 3 |" in card
+
+    def test_an_open_release_writes_its_attributions_in_manifest_order(self, tmp_path):
+        release = _prepare(tmp_path)
+        assert "attributions.csv" in release.paths
+        text = (release.root / "attributions.csv").read_text(encoding="utf-8")
+        assert [line.split(",")[0] for line in text.splitlines()] == [
+            "id",
+            "a",
+            "b",
+            "c",
+        ]
+
+    def test_a_restricted_release_writes_no_attributions(self, tmp_path):
+        release = _prepare(tmp_path, tier=Tier.RESTRICTED)
+        assert "attributions.csv" not in release.paths
+        assert not (release.root / "attributions.csv").exists()
 
     def test_new_shards_continue_from_what_the_repo_already_has(self, tmp_path):
         release = _prepare(

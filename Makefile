@@ -222,8 +222,9 @@ corpus-history:
 	uv run -m sciencebeam_dataset_builder.corpus.history_cli \
 		--corpus $(CORPUS) --tier $(TIER) $(RUN_ARGS)
 
-# How a corpus repo's card on the Hub differs from the one its latest release gives.
-# RUN_ARGS="--upload" commits that card to main, without making a release.
+# How a corpus repo's generated files on the Hub - the card and, for an open repo,
+# attributions.csv - differ from the ones its latest release gives. RUN_ARGS="--upload"
+# commits the ones that differ to main, without making a release.
 corpus-card:
 	uv run -m sciencebeam_dataset_builder.corpus.card_cli \
 		--corpus $(CORPUS) --tier $(TIER) $(RUN_ARGS)
