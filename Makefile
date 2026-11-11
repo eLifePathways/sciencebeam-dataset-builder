@@ -38,7 +38,7 @@ LICENCE_REPORTS_DIR ?= ./sciencebeam_dataset_builder/dataset/license/reports
 	licence-audit \
 	archive-cut archive-cut-render archive-cut-publish \
 	corpus-create-repo corpus-create-all-repos corpus-build corpus-build-upload \
-	change-ui corpus-change
+	change-ui corpus-change corpus-history corpus-card
 
 install:
 	uv sync --frozen
@@ -213,4 +213,17 @@ change-ui:
 # RUN_ARGS="--version v2.0.0" writes that release locally, for checking before upload.
 corpus-change:
 	uv run -m sciencebeam_dataset_builder.corpus.change_cli \
+		--corpus $(CORPUS) --tier $(TIER) $(RUN_ARGS)
+
+# The history an open repo still holds, and the pull request refs to delete on the website
+# before it goes public. RUN_ARGS="--version v2.0.0 --squash" then squashes main to one
+# commit tagged with that release, keeping its files as they are. It cannot be undone.
+corpus-history:
+	uv run -m sciencebeam_dataset_builder.corpus.history_cli \
+		--corpus $(CORPUS) --tier $(TIER) $(RUN_ARGS)
+
+# How a corpus repo's card on the Hub differs from the one its latest release gives.
+# RUN_ARGS="--upload" commits that card to main, without making a release.
+corpus-card:
+	uv run -m sciencebeam_dataset_builder.corpus.card_cli \
 		--corpus $(CORPUS) --tier $(TIER) $(RUN_ARGS)
