@@ -9,7 +9,13 @@ from collections.abc import Mapping
 
 import pyarrow as pa
 
-from sciencebeam_dataset_builder.corpus.layout import Tier, config_name, data_files
+from sciencebeam_dataset_builder.corpus.layout import (
+    CORRECTION_METADATA_FILENAME,
+    CORRECTIONS_DIRECTORY,
+    Tier,
+    config_name,
+    data_files,
+)
 from sciencebeam_dataset_builder.corpus.registry import Corpus
 from sciencebeam_dataset_builder.corpus.schema import CORPUS_SCHEMA, FIELD_DESCRIPTIONS
 from sciencebeam_dataset_builder.dataset.split import SPLIT_NAMES
@@ -124,9 +130,13 @@ def render_card(corpus: Corpus, tier: Tier, counts: Counts) -> str:
             "",
             "Some of the published JATS is wrong, and where we have fixed it the `xml`",
             "column carries our corrected version rather than the publisher's. Those",
-            "documents are modified, which `xml_upstream_sha` identifies: it is the",
-            "checksum of the XML as harvested, and `corrections/<id>/` holds that original",
-            "beside the edit and the reason for it.",
+            "documents are modified: they are the rows where `xml_upstream` is set, and",
+            "it holds the XML as harvested. The reason for each correction is in",
+            f"`{CORRECTIONS_DIRECTORY}/<id>/{CORRECTION_METADATA_FILENAME}`.",
+            "",
+            "Where `xml_ftfy_applied` is true, the XML was passed through `ftfy` when",
+            "it was harvested, to repair broken character encoding (mojibake), so its",
+            "text may differ from the publisher's.",
             "",
             "## The corpus set is provisional",
             "",
@@ -150,9 +160,13 @@ def render_card(corpus: Corpus, tier: Tier, counts: Counts) -> str:
 def _tier_paragraph(tier: Tier) -> str:
     if tier.public:
         return (
-            "Every document here is openly licensed and may be redistributed with "
-            "attribution. Attribution is discharged per document from the `xml`, which "
-            "carries the title, the author list and the licence statement."
+            "## Licence and attribution\n\n"
+            "Each document is published by its authors under "
+            "[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), as its "
+            "`licence` column says, and may be redistributed under that licence. The "
+            "documents belong to their authors, not to us. To credit one, give its "
+            "authors, title, DOI (the `doi` column) and licence; the `xml` carries the "
+            "author list, the title and the licence statement."
         )
     return (
         "This repo is private because its documents may not be redistributed. What each "
