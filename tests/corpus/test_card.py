@@ -62,7 +62,8 @@ class TestBody:
         """CC BY requires it, and the xml column is no longer verbatim upstream."""
         rendered = render_card(BIORXIV, Tier.OPEN, COUNTS)
         assert "modified" in rendered
-        assert "xml_upstream_sha" in rendered
+        assert "rows where `xml_upstream` is set" in rendered
+        assert "`changes/corrections/<id>/correction.yml`" in rendered
 
     def test_it_says_the_corpus_set_is_provisional(self):
         assert "provisional" in render_card(BIORXIV, Tier.OPEN, COUNTS)

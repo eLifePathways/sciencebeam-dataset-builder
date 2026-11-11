@@ -9,7 +9,13 @@ from collections.abc import Mapping
 
 import pyarrow as pa
 
-from sciencebeam_dataset_builder.corpus.layout import Tier, config_name, data_files
+from sciencebeam_dataset_builder.corpus.layout import (
+    CORRECTION_METADATA_FILENAME,
+    CORRECTIONS_DIRECTORY,
+    Tier,
+    config_name,
+    data_files,
+)
 from sciencebeam_dataset_builder.corpus.registry import Corpus
 from sciencebeam_dataset_builder.corpus.schema import CORPUS_SCHEMA, FIELD_DESCRIPTIONS
 from sciencebeam_dataset_builder.dataset.split import SPLIT_NAMES
@@ -124,9 +130,9 @@ def render_card(corpus: Corpus, tier: Tier, counts: Counts) -> str:
             "",
             "Some of the published JATS is wrong, and where we have fixed it the `xml`",
             "column carries our corrected version rather than the publisher's. Those",
-            "documents are modified, which `xml_upstream_sha` identifies: it is the",
-            "checksum of the XML as harvested, and `corrections/<id>/` holds that original",
-            "beside the edit and the reason for it.",
+            "documents are modified: they are the rows where `xml_upstream` is set, and",
+            "it holds the XML as harvested. The reason for each correction is in",
+            f"`{CORRECTIONS_DIRECTORY}/<id>/{CORRECTION_METADATA_FILENAME}`.",
             "",
             "## The corpus set is provisional",
             "",
