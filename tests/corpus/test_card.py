@@ -77,6 +77,7 @@ class TestBody:
         rendered = render_card(BIORXIV, Tier.OPEN, COUNTS)
         assert 'load_dataset("elifepathways/sciencebeam-dataset-biorxiv"' in rendered
         assert '"biorxiv-pdf-jats"' in rendered
+        assert 'print(ds["test"][0]["id"])' in rendered
 
     def test_the_public_and_private_cards_say_different_things_about_reuse(self):
         assert "may be redistributed" in render_card(BIORXIV, Tier.OPEN, COUNTS)
