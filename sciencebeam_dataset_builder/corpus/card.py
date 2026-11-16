@@ -151,7 +151,7 @@ def render_card(corpus: Corpus, tier: Tier, counts: Counts) -> str:
             "from datasets import load_dataset",
             "",
             f'ds = load_dataset("{corpus.repo_id(tier)}", "{first_config}")',
-            'print(ds["test"][0]["uid"])',
+            'print(ds["test"][0]["id"])',
             "```",
             "",
         ]
